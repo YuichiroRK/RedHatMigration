@@ -16,6 +16,22 @@ TIPOS   = ["Horario Específico","Rango de Horario","Horario Semi-específico"]
 TURNOS  = ["Mañana","Tarde","Noche"]
 
 
+def _vms_for_client(cliente: str) -> list:
+    cm      = build_column_map()
+    col_vm  = cm.get("vm_id","VM_ID_TM")
+    col_cli = cm.get("cliente","Cliente")
+    conn    = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql_query(
+            f'SELECT "{col_vm}" FROM VMs WHERE "{col_cli}"=? ORDER BY "{col_vm}"',
+            conn, params=(cliente,))
+        return df[col_vm].tolist() if not df.empty else []
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 def _load_vm_row(vm_id: str) -> pd.Series:
     cm     = build_column_map()
     col_vm = cm.get("vm_id","VM_ID_TM")
@@ -71,7 +87,108 @@ def _g(row: pd.Series, col, default=""):
     return default if v in ("nan","None","","<NA>") else v
 
 
-def render_vm_editor(vm_id: str, key_suffix: str = ""):
+def _load_pending_vms_for_client(cliente: str) -> list:
+    """Returns VM IDs with estado Asignada, Pendiente, or no ESTADO_VMS record."""
+    cm     = build_column_map()
+    col_vm = cm.get("vm_id","VM_ID_TM")
+    col_cli = cm.get("cliente","Cliente")
+    conn   = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql_query(f"""
+            SELECT v."{col_vm}" AS vm_id,
+                   COALESCE(e.Estado_Migracion, 'Sin estado') AS estado
+            FROM VMs v
+            LEFT JOIN ESTADO_VMS e ON v."{col_vm}" = e."{col_vm}"
+            WHERE v."{col_cli}" = ?
+              AND (e.Estado_Migracion IS NULL
+                   OR e.Estado_Migracion IN ('Asignada','Pendiente'))
+            ORDER BY v.rowid
+        """, conn, params=(cliente,))
+        return df.to_dict("records") if not df.empty else []
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _load_all_clients() -> list:
+    cm     = build_column_map()
+    col_cli = cm.get("cliente","Cliente")
+    conn   = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql_query(
+            f'SELECT DISTINCT "{col_cli}" FROM VMs ORDER BY "{col_cli}"', conn)
+        return df[col_cli].tolist()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+ESTADO_BADGE = {
+    "Asignada":  ("🔵","#3182CE"),
+    "Pendiente": ("⏳","#D69E2E"),
+    "Sin estado":("⚪","#8A95A3"),
+}
+
+
+def render_vm_selector_and_editor(key_suffix: str = "vm_sel"):
+    """
+    Full self-contained widget:
+    1. Select client
+    2. Shows VMs with estado Asignada / Pendiente / Sin estado
+    3. Select VM → opens editor
+    Useful when you don't have a vm_id in hand yet.
+    """
+    clientes = _load_all_clients()
+    if not clientes:
+        st.info("No hay VMs registradas en la tabla VMs.")
+        return
+
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        cliente_sel = st.selectbox(
+            "Cliente:",
+            ["— Seleccione —"] + clientes,
+            key=f"vmed_cli_{key_suffix}",
+        )
+
+    if not cliente_sel or cliente_sel == "— Seleccione —":
+        return
+
+    vms = _load_pending_vms_for_client(cliente_sel)
+
+    if not vms:
+        st.success(f"✅ **{cliente_sel}** no tiene VMs pendientes o sin estado.")
+        return
+
+    with c2:
+        vm_opts  = [v["vm_id"] for v in vms]
+        vm_label = {v["vm_id"]: v["estado"] for v in vms}
+        vm_sel   = st.selectbox(
+            f"VM ({len(vms)} pendientes):",
+            vm_opts,
+            key=f"vmed_vm_{key_suffix}",
+        )
+
+    if not vm_sel:
+        return
+
+    # Badge for selected VM state
+    est  = vm_label.get(vm_sel,"Sin estado")
+    icon, color = ESTADO_BADGE.get(est, ("⚪","#8A95A3"))
+    st.markdown(
+        f'<div style="margin:8px 0 4px;">'
+        f'<span style="background:{color};color:#fff;padding:2px 12px;'
+        f'border-radius:20px;font-size:.74rem;font-weight:700;">'
+        f'{icon} {est}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    render_vm_editor(vm_sel, key_suffix=key_suffix, cliente=cliente_sel)
+
+
+def render_vm_editor(vm_id: str, key_suffix: str = "", cliente: str = ""):
     """
     Renders an inline editor for all agendamiento fields of a VM.
     Only edits the VMs table — ESTADO_VMS is handled by status_widget.
@@ -97,21 +214,32 @@ def render_vm_editor(vm_id: str, key_suffix: str = ""):
 
     k = f"{vm_id}_{key_suffix}"
 
+    col_vm  = cm.get("vm_id","VM_ID_TM")
+    col_cli = cm.get("cliente","Cliente")
+
     # ── Row 1: Identidad ──────────────────────────────────
     st.markdown('<div style="font-size:.7rem;font-weight:800;letter-spacing:.09em;'
                 'text-transform:uppercase;color:#FF7800;margin:8px 0 10px;">🏷️ Identidad</div>',
                 unsafe_allow_html=True)
 
-    col_vm  = cm.get("vm_id","VM_ID_TM")
-    col_cli = cm.get("cliente","Cliente")
-
     c1, c2 = st.columns(2)
     with c1:
-        new_vm_id = st.text_input("VM ID (VM_ID_TM)", value=_g(row, col_vm, vm_id),
-                                   key=f"ed_vmid_{k}")
+        # Cliente: pre-filled from selector, editable
+        cur_cli = cliente or _g(row, col_cli)
+        new_cli = st.text_input("Cliente", value=cur_cli, key=f"ed_cli_{k}")
+
     with c2:
-        new_cli = st.text_input("Cliente", value=_g(row, col_cli),
-                                 key=f"ed_cli_{k}")
+        # VM ID: selectbox of all VMs for this client
+        vm_options = _vms_for_client(new_cli) if new_cli else [vm_id]
+        if vm_id not in vm_options:
+            vm_options = [vm_id] + vm_options
+        vm_idx    = vm_options.index(vm_id) if vm_id in vm_options else 0
+        new_vm_id = st.selectbox("VM ID", vm_options, index=vm_idx, key=f"ed_vmid_{k}")
+
+        # If VM changed, reload row
+        if new_vm_id != vm_id:
+            row = _load_vm_row(new_vm_id)
+            vm_id = new_vm_id
 
     # ── Row 2: Clasificación ─────────────────────────────
     st.markdown('<div style="font-size:.7rem;font-weight:800;letter-spacing:.09em;'

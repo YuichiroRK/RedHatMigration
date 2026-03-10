@@ -10,7 +10,7 @@ import pandas as pd
 from ui.components import section_card
 from ui.db_utils import build_column_map, safe_get, DB_PATH
 from ui.status_widget import render_status_editor, STATE_META as ESTADO_COLOR_MAP
-from ui.vm_editor import render_vm_editor
+from ui.vm_editor import render_vm_editor, render_vm_selector_and_editor
 
 COL_VM_ID = "VM_ID_TM"
 
@@ -432,4 +432,4 @@ def render():
                 with t_agend:
                     st.caption("Modifica los datos de agendamiento: VM ID, cliente, horario, etc. "
                                "Escribe en la tabla **VMs** — no toca el estado de migración.")
-                    render_vm_editor(vm_sel, key_suffix="ag")
+                    render_vm_selector_and_editor(key_suffix="ag_tab")

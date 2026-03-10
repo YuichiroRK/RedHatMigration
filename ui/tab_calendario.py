@@ -16,6 +16,7 @@ from ui.calendar_utils import (
 from ui.components import section_card
 from ui.db_utils import build_column_map, safe_get, DB_PATH
 from ui.status_widget import render_status_editor
+from ui.vm_editor import render_vm_editor, render_vm_selector_and_editor
 
 ESTADO_ICON = {
     "Asignada":"🔵","Éxito":"✅","Pendiente":"⏳",
@@ -299,8 +300,20 @@ def _vm_detail(vm_id: str):
                 f'<div style="font-size:.85rem;color:#4A5568;line-height:1.7;">{com}</div>',
                 unsafe_allow_html=True)
 
-    # ── Editor de estado ──────────────────────────────────
-    render_status_editor(vm_id, gv('cliente'), estado, key_suffix="cal")
+    # ── Dos pestañas: estado vs agendamiento ─────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    t_estado, t_agend = st.tabs([
+        "📊 Estado de Migración (ESTADO_VMS)",
+        "✏️ Editar Agendamiento (VMs)",
+    ])
+    with t_estado:
+        st.caption("Modifica el estado de migración, fechas y observaciones. "
+                   "Escribe en la tabla **ESTADO_VMS** — no toca el agendamiento.")
+        render_status_editor(vm_id, gv('cliente'), estado, key_suffix="cal")
+    with t_agend:
+        st.caption("Modifica los datos de agendamiento: VM ID, cliente, horario, etc. "
+                   "Escribe en la tabla **VMs** — no toca el estado de migración.")
+        render_vm_selector_and_editor(key_suffix="cal_det")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -335,6 +348,80 @@ def _day_section(day_evs: list, sel: date, key_prefix: str):
                     unsafe_allow_html=True)
                 if st.button(vid, key=f"{key_prefix}_{vid}_{sel_key}",
                              use_container_width=True):
+                    st.session_state["cal_vm"] = vid
+                    st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
+# Pending VMs panel
+# ─────────────────────────────────────────────────────────────
+def _load_pending_vms(cliente: str) -> pd.DataFrame:
+    """
+    Returns VMs for a client whose Estado_Migracion is
+    'Asignada', 'Pendiente', or has no entry in ESTADO_VMS.
+    """
+    cm     = build_column_map()
+    col_vm  = cm.get("vm_id","VM_ID_TM")
+    col_cli = cm.get("cliente","Cliente")
+    conn   = sqlite3.connect(DB_PATH)
+    try:
+        return pd.read_sql_query(f"""
+            SELECT
+                v."{col_vm}" AS VM_ID,
+                COALESCE(e.Estado_Migracion, 'Sin estado') AS Estado,
+                v."{cm.get('ambiente','Ambiente')}"         AS Ambiente,
+                v."{cm.get('criticidad','Criticidad')}"     AS Criticidad,
+                v."{cm.get('tipo_ventana','Tipo_Ventana')}" AS Tipo_Ventana
+            FROM VMs v
+            LEFT JOIN ESTADO_VMS e ON v."{col_vm}" = e."{col_vm}"
+            WHERE v."{col_cli}" = ?
+              AND (
+                e.Estado_Migracion IS NULL
+                OR e.Estado_Migracion IN ('Asignada','Pendiente')
+              )
+            ORDER BY v.rowid
+        """, conn, params=(cliente,))
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+def _pending_vms_section(cliente: str):
+    """Shows pending/unstarted VMs for the selected client as quick-access buttons."""
+    if not cliente or cliente == "— Todos —":
+        return
+
+    df = _load_pending_vms(cliente)
+    if df.empty:
+        st.info(f"✅ **{cliente}** no tiene VMs pendientes o sin estado.")
+        return
+
+    ESTADO_COL = {
+        "Asignada":  "#3182CE",
+        "Pendiente": "#D69E2E",
+        "Sin estado":"#8A95A3",
+    }
+
+    st.markdown(
+        f'<div style="font-size:.72rem;font-weight:800;letter-spacing:.08em;'
+        f'text-transform:uppercase;color:#FF7800;margin-bottom:8px;">'
+        f'🖥️ VMs pendientes de {cliente} ({len(df)})</div>',
+        unsafe_allow_html=True)
+
+    # Grid of buttons — 5 per row
+    for i in range(0, len(df), 5):
+        cols = st.columns(min(5, len(df)-i))
+        for col, (_, row) in zip(cols, df.iloc[i:i+5].iterrows()):
+            vid    = row["VM_ID"]
+            est    = row["Estado"]
+            color  = ESTADO_COL.get(est, "#8A95A3")
+            with col:
+                st.markdown(
+                    f'<div style="font-size:.6rem;color:{color};font-weight:700;'
+                    f'text-align:center;margin-bottom:1px;">{est}</div>',
+                    unsafe_allow_html=True)
+                if st.button(vid, key=f"pv_{vid}", use_container_width=True):
                     st.session_state["cal_vm"] = vid
                     st.rerun()
 
@@ -379,6 +466,12 @@ def render():
         st.session_state["cal_client"] = st.selectbox(
             "Cliente:", opts, index=idx, key="cal_cli",
             label_visibility="collapsed")
+
+    # ── Pending VMs for selected client ─────────────────
+    if st.session_state["cal_client"] != "— Todos —":
+        with section_card(f"🔍 VMs Pendientes — {st.session_state['cal_client']}"):
+            render_vm_selector_and_editor(key_suffix="cal_pend")
+        st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Month navigator (embedded in calendar header area) ──
     mh1, mh2, mh3 = st.columns([1, 3, 1])
