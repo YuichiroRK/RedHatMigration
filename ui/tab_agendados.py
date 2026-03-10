@@ -10,6 +10,7 @@ import pandas as pd
 from ui.components import section_card
 from ui.db_utils import build_column_map, safe_get, DB_PATH
 from ui.status_widget import render_status_editor, STATE_META as ESTADO_COLOR_MAP
+from ui.vm_editor import render_vm_editor
 
 COL_VM_ID = "VM_ID_TM"
 
@@ -183,7 +184,7 @@ def _dashboard_global(df_all: pd.DataFrame):
 
     st.markdown(
         prog(f"📅 Agendamiento — {total_ag} de {total_sistema}", pct_ag, "#FF7800")
-        + prog(f"✅ Migración completada — {counts['Éxito']} de {total_sistema  }", pct_exito, "#38A169"),
+        + prog(f"✅ Migración completada — {counts['Éxito']} de {total_ag}", pct_exito, "#38A169"),
         unsafe_allow_html=True,
     )
 
@@ -379,8 +380,8 @@ def render():
             f'{len(df_view)} registros</div>', unsafe_allow_html=True)
         st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-    # ── Selección de VM para ver detalle / editar estado ──
-    with section_card("🖥️ Ver Detalle y Editar Estado de VM"):
+    # ── Selección de VM ──────────────────────────────────
+    with section_card("🖥️ Gestionar VM"):
         col_vm_id = cm.get("vm_id","VM_ID_TM")
         vm_ids    = (sorted(df_view[col_vm_id].dropna().unique().tolist())
                      if col_vm_id in df_view.columns else [])
@@ -396,25 +397,39 @@ def render():
                 if not row_vm.empty and col_e and col_e in row_vm.columns:
                     estado_actual = str(row_vm.iloc[0][col_e])
 
-                # Estado badge header
-                color, icon = ESTADO_COLOR_MAP.get(estado_actual,("#FF7800","🟠"))
+                # VM header badge
+                color_vm = ESTADO_COLOR_MAP.get(estado_actual,{"color":"#FF7800","icon":"🟠"})["color"]
+                icon_vm  = ESTADO_COLOR_MAP.get(estado_actual,{"color":"#FF7800","icon":"🟠"})["icon"]
                 st.markdown(f"""
-                <div style="background:#fff;border-radius:12px;border-left:4px solid {color};
+                <div style="background:#fff;border-radius:12px;border-left:4px solid {color_vm};
                      padding:12px 18px;margin:10px 0;box-shadow:0 1px 4px rgba(0,0,0,.05);
                      display:flex;align-items:center;gap:12px;">
                   <div style="font-size:1.4rem;">🖥️</div>
-                  <div>
-                    <div style="font-size:.95rem;font-weight:800;color:#1E2330;">{vm_sel}</div>
-                  </div>
+                  <div style="font-size:.95rem;font-weight:800;color:#1E2330;">{vm_sel}</div>
                   <div style="margin-left:auto;">
-                    <span style="background:{color};color:#fff;padding:3px 12px;
+                    <span style="background:{color_vm};color:#fff;padding:3px 12px;
                           border-radius:20px;font-size:.75rem;font-weight:700;">
-                      {icon} {estado_actual}
+                      {icon_vm} {estado_actual}
                     </span>
                   </div>
                 </div>""", unsafe_allow_html=True)
 
+                # ── Two clearly separated action tabs ────────
+                t_estado, t_agend = st.tabs([
+                    "📊 Estado de Migración (ESTADO_VMS)",
+                    "✏️ Editar Agendamiento (VMs)",
+                ])
+
                 cliente_vm = ""
                 if not row_vm.empty and col_cli in row_vm.columns:
                     cliente_vm = str(row_vm.iloc[0][col_cli])
-                _vm_detail_inline(vm_sel, cm, estado_actual, cliente_vm)
+
+                with t_estado:
+                    st.caption("Modifica el estado de migración, fechas y observaciones. "
+                               "Escribe en la tabla **ESTADO_VMS** — no toca el agendamiento.")
+                    _vm_detail_inline(vm_sel, cm, estado_actual, cliente_vm)
+
+                with t_agend:
+                    st.caption("Modifica los datos de agendamiento: VM ID, cliente, horario, etc. "
+                               "Escribe en la tabla **VMs** — no toca el estado de migración.")
+                    render_vm_editor(vm_sel, key_suffix="ag")
