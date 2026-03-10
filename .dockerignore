@@ -1,0 +1,14 @@
+pycache/
+venv/
+.venv/
+.git/
+.gitignore
+docker-compose.yml
+Dockerfile
+
+No incluir los datos en la imagen (se conectan por volumen)
+
+migraciones.db
+data/
+*.xlsx
+*.csv
