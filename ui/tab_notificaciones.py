@@ -177,6 +177,69 @@ def _form_ventana():
 
 
 # ─────────────────────────────────────────────────────────────
+# Client selector (outside form — supports paste)
+# ─────────────────────────────────────────────────────────────
+def _cliente_selector(clientes_lista: list) -> list:
+    """
+    Paste + multiselect OUTSIDE the form so dynamic defaults work correctly.
+    Returns the final list of selected clients.
+    """
+    with section_card("👥 Selección de Clientes"):
+        # ── Paste area ───────────────────────────────────
+        paste_raw = st.text_area(
+            "📋 Pegar clientes (Ctrl+V — uno por línea o separados por coma):",
+            key="notif_paste",
+            height=75,
+            placeholder="Pega aquí la lista de clientes…",
+        )
+
+        # Parse + match against directory (case-insensitive)
+        auto_selected = []
+        not_found     = []
+        if paste_raw.strip():
+            tokens = list(dict.fromkeys(
+                t.strip()
+                for t in paste_raw.replace(",", "\n").splitlines()
+                if t.strip()
+            ))
+            upper_map = {c.upper(): c for c in clientes_lista if c and isinstance(c, str)}
+            for tok in tokens:
+                match = upper_map.get(tok.upper())
+                if match:
+                    auto_selected.append(match)
+                else:
+                    not_found.append(tok)
+
+            if not_found:
+                st.warning(
+                    "⚠️ No encontrados en el directorio: " +
+                    ", ".join(f"**{n}**" for n in not_found)
+                )
+            if auto_selected:
+                st.success(
+                    f"✅ {len(auto_selected)} cliente(s) identificados automáticamente."
+                )
+
+        # ── Multiselect — default driven by paste result ─
+        # Use session_state to persist selection across reruns
+        ss_key = "notif_clientes_sel"
+        if auto_selected:
+            # Merge pasted into existing selection without duplicates
+            existing = st.session_state.get(ss_key, [])
+            merged   = list(dict.fromkeys(existing + auto_selected))
+            st.session_state[ss_key] = merged
+
+        clientes_sel = st.multiselect(
+            "Clientes seleccionados:",
+            options=clientes_lista,
+            default=st.session_state.get(ss_key, []),
+            key=ss_key,
+        )
+
+    return clientes_sel
+
+
+# ─────────────────────────────────────────────────────────────
 # Main render
 # ─────────────────────────────────────────────────────────────
 def render():
@@ -184,44 +247,62 @@ def render():
 
     clientes_lista = _clientes_directorio()
 
+    # ── Client selector lives OUTSIDE the form ───────────
+    clientes_sel = _cliente_selector(clientes_lista)
+
     col_form, col_info = st.columns([1.5, 1])
 
     with col_form:
         with st.form("form_notificaciones", clear_on_submit=True):
             st.markdown("### ✉️ Detalles del Envío")
 
-            clientes_sel = st.multiselect(
-                "Clientes notificados (uno o varios):", clientes_lista
-            )
+            # Show selected clients as read-only summary inside the form
+            if clientes_sel:
+                st.markdown(
+                    f'<div style="background:#F0FFF4;border:1px solid #9AE6B4;'
+                    f'border-radius:8px;padding:8px 14px;margin-bottom:10px;'
+                    f'font-size:.8rem;color:#22543D;font-weight:600;">'
+                    f'✅ {len(clientes_sel)} cliente(s) seleccionado(s): '
+                    + ", ".join(clientes_sel[:5])
+                    + (f" … y {len(clientes_sel)-5} más" if len(clientes_sel) > 5 else "")
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info("ℹ️ Selecciona clientes arriba antes de registrar.")
+
             c1, c2 = st.columns(2)
             with c1:
                 creado_por = st.text_input("Ingeniero / Registrado por:")
                 canal      = st.selectbox("Canal:", ["Email","Teléfono","Reunión Teams","WhatsApp","Otro"])
             with c2:
                 estado   = st.selectbox("Estado:", ["Enviado","Recibido","Sin Respuesta","Rebotado"])
-                cantidad = st.number_input("Intentos / mensajes:", min_value=1, value=1)
 
             notas  = st.text_area("Notas / Asunto / Observaciones:")
             submit = st.form_submit_button("🚀 Registrar Notificaciones")
 
             if submit:
                 if not clientes_sel:
-                    st.error("Selecciona al menos un cliente.")
+                    st.error("Selecciona al menos un cliente en la sección de arriba.")
                 elif not creado_por.strip():
                     st.error("Indica quién registra la notificación.")
                 else:
                     if guardar_notificaciones_masivas(
-                        clientes_sel, creado_por.strip(), estado, canal, str(cantidad), notas.strip()
+                        clientes_sel, creado_por.strip(), estado, canal, "1", notas.strip()
                     ):
                         st.success(f"✅ Notificación registrada para {len(clientes_sel)} cliente(s).")
+                        # Clear client selection after successful submit
+                        st.session_state["notif_clientes_sel"] = []
+                        st.session_state["notif_paste"] = ""
                         st.balloons()
 
     with col_info:
         st.info(
             "**💡 Tip de uso masivo:**\n\n"
-            "Usa esta herramienta cuando envíes un correo general o invites a múltiples "
-            "clientes a una reunión de mantenimiento. El sistema crea una fila individual "
-            "por cada cliente seleccionado en `NOTIFICACIONES_CLIENTES`."
+            "Pega la lista de clientes con Ctrl+V (uno por línea o separados "
+            "por coma) y se seleccionarán automáticamente.\n\n"
+            "El sistema crea una fila individual por cada cliente en "
+            "`NOTIFICACIONES_CLIENTES`."
         )
 
     # ── Expander: agendar ventana desde esta misma tab ────

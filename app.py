@@ -50,7 +50,7 @@ with st.sidebar:
     NAV_OPTIONS = [
         "📢 Notificaciones Clientes",
         "📅 Ver Calendario",
-        "⏰ Ver Ventanas",
+        "⏰ Ver Estado de VMs",
     ]
     if _has_logs:     NAV_OPTIONS.append("📝 Logs y Seguimiento")
     if _has_hist:     NAV_OPTIONS.append("📭 Ver Notificaciones")
@@ -70,7 +70,7 @@ if opcion == "📅 Ver Calendario":
     tab_calendario.render()
 
 
-elif opcion == "⏰ Ver Ventanas":
+elif opcion == "⏰ Ver Estado de VMs":
     tab_agendados.render()
 
 elif opcion == "📢 Notificaciones Clientes":

@@ -5,7 +5,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mapeo de persistencia: tus 1700 datos viven en tu PC y Docker los lee
       - ./migraciones.db:/app/migraciones.db
       - ./data:/app/data
     restart: always

@@ -184,7 +184,7 @@ def _dashboard_global(df_all: pd.DataFrame):
 
     st.markdown(
         prog(f"📅 Agendamiento — {total_ag} de {total_sistema}", pct_ag, "#FF7800")
-        + prog(f"✅ Migración completada — {counts['Éxito']} de {total_ag}", pct_exito, "#38A169"),
+        + prog(f"✅ Migración completada — {counts['Éxito']} de {total_sistema}", pct_exito, "#38A169"),
         unsafe_allow_html=True,
     )
 
