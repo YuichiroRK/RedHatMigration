@@ -88,10 +88,10 @@ def render():
 
     with col_a:
         with section_card("📋 Información General"):
-            en_uso     = st.selectbox("¿En Uso?", ["Si", "No"], key="en_uso")
-            ambiente   = st.selectbox("Ambiente:", list(DESC_AMBIENTES.keys()), key="ambiente")
+            en_uso     = st.selectbox("¿La Máquina Virtual está actualmente en Uso?", ["Si", "No"], key="en_uso")
+            ambiente   = st.selectbox("¿En qué ambiente se encuentra la VM?:", list(DESC_AMBIENTES.keys()), key="ambiente")
             ambiente_desc(ambiente)
-            criticidad  = st.selectbox("Criticidad:", ["Critico", "Alta", "Media", "Baja"], key="criticidad")
+            criticidad  = st.selectbox("¿Qué tan crítico fue/será atender al cliente?:", ["Critico", "Alta", "Media", "Baja"], key="criticidad")
             motivo_crit = st.text_input("Razón de la criticidad:", key="motivo")
 
     with col_b:

@@ -102,10 +102,10 @@ def _form_ventana():
     col_a, col_b = st.columns(2, gap="large")
     with col_a:
         with section_card("📋 Información General"):
-            en_uso      = st.selectbox("¿En Uso?",     ["Si", "No"],                            key="nv_en_uso")
-            ambiente    = st.selectbox("Ambiente:",    list(DESC_AMBIENTES.keys()),              key="nv_ambiente")
+            en_uso      = st.selectbox("¿La Máquina Virtual está actualmente en Uso?",     ["Si", "No"],                            key="nv_en_uso")
+            ambiente    = st.selectbox("¿En qué ambiente se encuentra la VM?:",    list(DESC_AMBIENTES.keys()),              key="nv_ambiente")
             ambiente_desc(ambiente)
-            criticidad  = st.selectbox("Criticidad:", ["Critico", "Alta", "Media", "Baja"],     key="nv_criticidad")
+            criticidad  = st.selectbox("¿Qué tan crítico fue/será atender al cliente?:", ["Critico", "Alta", "Media", "Baja"],     key="nv_criticidad")
             motivo_crit = st.text_input("Razón de la criticidad:",                              key="nv_motivo")
 
     with col_b:

@@ -15,9 +15,9 @@ import pandas as pd
 # Descripciones de ambiente
 # ─────────────────────────────────────────────────────────────
 DESC_AMBIENTES = {
-    "PROD": ("🔴 Producción",       "Servicios críticos en vivo para el cliente. Cualquier cambio impacta directamente al usuario final.", "amb-prod"),
-    "DEV":  ("🟢 Desarrollo",       "Entorno de construcción y pruebas internas del equipo técnico. Sin impacto en producción.",          "amb-dev"),
-    "QA":   ("🟡 Quality Assurance","Validación de calidad y pruebas de aceptación de usuario antes de subir a producción.",              "amb-qa"),
+    "PRODUCCIÓN (PROD)": ("🔴 Producción",       "Servicios críticos en vivo para el cliente. Cualquier cambio impacta directamente al usuario final.", "amb-prod"),
+    "DESARROLLO (DEV)":  ("🟢 Desarrollo",       "Entorno de construcción y pruebas internas del equipo técnico. Sin impacto en producción.",          "amb-dev"),
+    "CALIDAD (QA)":   ("🟡 Quality Assurance","Validación de calidad y pruebas de aceptación de usuario antes de subir a producción.",              "amb-qa"),
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -56,47 +56,69 @@ def ambiente_desc(ambiente: str):
 # ─────────────────────────────────────────────────────────────
 # Chip input (texto libre → chips con ➕ y limpiar)
 # ─────────────────────────────────────────────────────────────
-def chip_input(label: str, session_key: str, placeholder: str = "Escribe y pulsa Agregar →"):
+def chip_input(label: str, session_key: str, placeholder: str = "Escribe y presiona Enter o ➕"):
     """Renderiza un campo con chips editables. Devuelve la lista actual."""
     if session_key not in st.session_state:
         st.session_state[session_key] = []
 
+    input_key = f"_input_{session_key}"
+
+    # ── on_change: fires when user presses Enter ──────────
+    def _add_chip():
+        v = st.session_state.get(input_key, "").strip()
+        if v and v not in st.session_state[session_key]:
+            st.session_state[session_key].append(v)
+        st.session_state[input_key] = ""   # clear field after adding
+
     chips: list = st.session_state[session_key]
 
     st.markdown(
-        f'<div style="font-size:0.82rem;font-weight:600;color:#4A5568;margin-bottom:4px;">{label}</div>',
+        f'<div style="font-size:0.82rem;font-weight:600;color:#4A5568;margin-bottom:6px;">{label}</div>',
         unsafe_allow_html=True,
     )
 
+    # ── Chip display ──────────────────────────────────────
     if chips:
-        chip_html = '<div class="chips-wrap">'
+        chip_html = (
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;'
+            'background:#F9FAFB;border:1.5px solid #E2E6ED;'
+            'border-radius:10px;padding:10px 12px;margin-bottom:8px;">'
+        )
         for item in chips:
-            chip_html += f'<span class="chip">{item}</span>'
+            chip_html += (
+                f'<span style="display:inline-flex;align-items:center;gap:5px;'
+                f'background:linear-gradient(135deg,#FF7800,#FF9A3C);color:#fff;'
+                f'padding:4px 12px;border-radius:20px;font-size:.76rem;font-weight:700;'
+                f'box-shadow:0 1px 4px rgba(255,120,0,.3);">'
+                f'⚙️ {item}</span>'
+            )
         chip_html += "</div>"
     else:
         chip_html = (
-            '<div class="chips-wrap">'
-            f'<span class="chips-empty">Sin entradas — {placeholder}</span>'
-            "</div>"
+            '<div style="background:#F9FAFB;border:1.5px dashed #CBD5E0;'
+            'border-radius:10px;padding:10px 12px;margin-bottom:8px;'
+            'font-size:.76rem;color:#A0AEC0;font-style:italic;">'
+            f'Sin aplicaciones agregadas aún…'
+            '</div>'
         )
     st.markdown(chip_html, unsafe_allow_html=True)
 
+    # ── Input + button ────────────────────────────────────
     col_in, col_btn = st.columns([4, 1])
     with col_in:
-        valor = st.text_input(
-            label, key=f"_input_{session_key}",
+        st.text_input(
+            label, key=input_key,
             label_visibility="collapsed",
             placeholder=placeholder,
+            on_change=_add_chip,
         )
     with col_btn:
         if st.button("➕", key=f"_btn_{session_key}", use_container_width=True):
-            v = valor.strip()
-            if v and v not in chips:
-                chips.append(v)
-                st.rerun()
+            _add_chip()
+            st.rerun()
 
     if chips:
-        if st.button("🗑 Limpiar", key=f"_clear_{session_key}"):
+        if st.button("🗑 Limpiar todo", key=f"_clear_{session_key}"):
             st.session_state[session_key] = []
             st.rerun()
 
