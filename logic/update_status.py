@@ -54,6 +54,12 @@ def upsert_vm_status(
                  fecha_finalizacion, observaciones),
             )
 
+        # Keep VMs.Estado in sync with Estado_Migracion
+        conn.execute(
+            'UPDATE VMs SET "Estado" = ? WHERE "VM_ID_TM" = ?',
+            (nuevo_estado, vm_id),
+        )
+
         conn.commit()
         conn.close()
         return True, ""

@@ -369,7 +369,7 @@ def render():
                 creado_por = st.text_input("Ingeniero / Registrado por:")
                 canal      = st.selectbox("Canal:", ["Email","Teléfono","Reunión Teams","WhatsApp","Otro"])
             with c2:
-                estado   = st.selectbox("Estado:", ["Enviado","Recibido","Sin Respuesta","Rebotado"])
+                estado   = st.selectbox("Estado:", ["Enviado","Recibido","Sin Respuesta","Rebotado","Cliente por Contactar"])
 
             notas  = st.text_area("Notas / Asunto / Observaciones:")
             submit = st.form_submit_button("🚀 Registrar Notificaciones")

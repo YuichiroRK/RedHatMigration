@@ -7,7 +7,6 @@ import streamlit as st
 from ui import tab_calendario, tab_agendamiento, tab_agendados
 from ui.styles import inject
 
-# Optional tabs — safe import so missing files don't crash the app
 try:
     from ui import tab_logs
     _has_logs = True
@@ -38,19 +37,13 @@ try:
 except ImportError:
     _has_stats = False
 
-# ── Password for protected tabs ───────────────────────────
-_ADMIN_PASSWORD = "liberty2025"   # ← cambia esto
+_ADMIN_PASSWORD = "liberty2025"
 
 
 def _check_password(gate_key: str) -> bool:
-    """
-    Renders a password gate. Returns True once the correct password
-    has been entered. Persists in session_state so it only asks once.
-    """
     auth_key = f"_auth_{gate_key}"
     if st.session_state.get(auth_key):
         return True
-
     st.markdown("### 🔒 Acceso restringido")
     pwd = st.text_input("Contraseña:", type="password", key=f"_pwd_{gate_key}")
     if st.button("Entrar", key=f"_btn_{gate_key}"):
@@ -65,11 +58,9 @@ def _check_password(gate_key: str) -> bool:
 st.set_page_config(page_title="Gestión Migraciones LN", layout="wide", page_icon="🏢")
 inject()
 
-# ── Redirect hook (must run before sidebar) ───────────────
 if "redirect_to" in st.session_state:
     st.session_state["menu_principal"] = st.session_state.pop("redirect_to")
 
-# ── Sidebar ───────────────────────────────────────────────
 with st.sidebar:
     st.image(
         "https://mms.businesswire.com/media/20240312814173/es/2063244/5/LN_LOGO.jpg",
@@ -80,9 +71,9 @@ with st.sidebar:
     NAV_OPTIONS = [
         "📢 Notificaciones Clientes",
         "📅 Ver Calendario",
-        "⏰ Ver Ventanas",
+        "📊 Estadística de Ventanas",
     ]
-    if _has_stats:    NAV_OPTIONS.append("📊 Stats Semanales")
+    if _has_stats:    NAV_OPTIONS.append("👥 Estadística de Clientes")
     if _has_logs:     NAV_OPTIONS.append("📝 Logs y Seguimiento")
     if _has_hist:     NAV_OPTIONS.append("📭 Ver Notificaciones")
     if _has_clientes: NAV_OPTIONS.append("👤 Clientes")
@@ -96,11 +87,10 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Liberty Networks - Migration Tool v2.0")
 
-# ── Routing ───────────────────────────────────────────────
 if opcion == "📅 Ver Calendario":
     tab_calendario.render()
 
-elif opcion == "⏰ Ver Ventanas":
+elif opcion == "📊 Estadística de Ventanas":
     tab_agendados.render()
 
 elif opcion == "📢 Notificaciones Clientes":
@@ -109,7 +99,7 @@ elif opcion == "📢 Notificaciones Clientes":
     else:
         st.warning("Módulo de notificaciones no disponible.")
 
-elif opcion == "📊 Stats Semanales" and _has_stats:
+elif opcion == "👥 Estadística de Clientes" and _has_stats:
     tab_stats.render()
 
 elif opcion == "📝 Logs y Seguimiento" and _has_logs:

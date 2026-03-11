@@ -1,6 +1,7 @@
 """
 ui/tab_agendados.py
-Tab de visualización — dashboard global + progreso por cliente + detalle/edición de VM.
+Estadística de Ventanas — dashboard global + progreso por cliente + tabla de VMs.
+(Edición de VMs solo disponible en Ver Calendario)
 """
 
 import sqlite3
@@ -10,37 +11,57 @@ import pandas as pd
 from ui.components import section_card
 from ui.db_utils import build_column_map, safe_get, DB_PATH
 from ui.status_widget import render_status_editor, STATE_META as ESTADO_COLOR_MAP
-from ui.vm_editor import render_vm_editor, render_vm_selector_and_editor
 
 COL_VM_ID = "VM_ID_TM"
 
-TURNO_HORAS = {"Mañana (6AM a 2PM)":"06:00–14:00","Tarde (2PM a 10PM)":"14:00–22:00","Noche (10PM a 6AM)":"22:00–06:00"}
+TURNO_HORAS = {
+    "Mañana (6AM a 2PM)": "06:00–14:00",
+    "Tarde (2PM a 10PM)": "14:00–22:00",
+    "Noche (10PM a 6AM)": "22:00–06:00",
+}
 
-# Orden y metadatos de todos los estados posibles
 ESTADOS_META = {
-    "Agendado":       {"icon":"🔵","color":"#3182CE","label":"Agendados"},
-    "Éxito":          {"icon":"✅","color":"#38A169","label":"Éxito"},
-    "Sin Agendar":    {"icon":"⏳","color":"#D69E2E","label":"Sin Agendar"},
-    "En Seguimiento": {"icon":"🔍","color":"#805AD5","label":"Seguimiento"},
-    "RollBack":       {"icon":"↩️","color":"#E53E3E","label":"RollBack"},
-    "Fallida":        {"icon":"❌","color":"#C53030","label":"Fallidas"},
+    "Agendado":       {"icon": "🔵", "color": "#3182CE", "label": "Agendados"},
+    "Éxito":          {"icon": "✅", "color": "#38A169", "label": "Éxito"},
+    "Sin Agendar":    {"icon": "⏳", "color": "#D69E2E", "label": "Sin Agendar"},
+    "En Seguimiento": {"icon": "🔍", "color": "#805AD5", "label": "Seguimiento"},
+    "RollBack":       {"icon": "↩️", "color": "#E53E3E", "label": "RollBack"},
+    "Fallida":        {"icon": "❌", "color": "#C53030", "label": "Fallidas"},
 }
 
 
 # ─────────────────────────────────────────────────────────────
 # Data helpers
 # ─────────────────────────────────────────────────────────────
+def _migrate_old_states():
+    """
+    One-time migration: rename legacy state values in both VMs and ESTADO_VMS.
+    'Pendiente' → 'Sin Agendar', 'Asignada'/'Asignadas' → 'Agendado'
+    Safe to run on every startup (no-op if already migrated).
+    """
+    renames = [
+        ("Pendiente",  "Sin Agendar"),
+        ("Asignada",   "Agendado"),
+        ("Asignadas",  "Agendado"),
+    ]
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        for old, new in renames:
+            conn.execute('UPDATE VMs SET "Estado" = ? WHERE "Estado" = ?', (new, old))
+            conn.execute('UPDATE ESTADO_VMS SET "Estado_Migracion" = ? WHERE "Estado_Migracion" = ?', (new, old))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def _load_all() -> pd.DataFrame:
-    """
-    Carga VMs y hace LEFT JOIN con ESTADO_VMS para traer
-    Estado_Migracion, Fecha_Ejecucion, Fecha_Finalizacion, Observaciones_Fallo.
-    """
     conn = sqlite3.connect(DB_PATH)
     try:
         return pd.read_sql_query("""
             SELECT
                 v.*,
-                COALESCE(e.Estado_Migracion, v.Estado, 'Agendado') AS Estado_Migracion,
+                COALESCE(e.Estado_Migracion, v.Estado, 'Sin Agendar') AS Estado_Migracion,
                 e.Fecha_Ejecucion,
                 e.Fecha_Finalizacion,
                 e.Observaciones_Fallo
@@ -48,39 +69,38 @@ def _load_all() -> pd.DataFrame:
             LEFT JOIN ESTADO_VMS e ON v.VM_ID_TM = e.VM_ID_TM
             ORDER BY v.rowid DESC
         """, conn)
-    except:
-        # Fallback si ESTADO_VMS no existe aún
+    except Exception:
         try:
             return pd.read_sql_query("SELECT * FROM VMs ORDER BY rowid DESC", conn)
-        except:
+        except Exception:
             return pd.DataFrame()
     finally:
         conn.close()
 
 
-def _col_estado(df: pd.DataFrame) -> str | None:
-    # Prefer the joined ESTADO_VMS column, fallback to VMs.Estado
+def _col_estado(df: pd.DataFrame):
     for c in ["Estado_Migracion", "Estado", "estado"]:
-        if c in df.columns: return c
+        if c in df.columns:
+            return c
     return None
 
 
 def _fmt_ventana(row: pd.Series, cm: dict) -> str:
-    tipo = str(row.get(cm.get("tipo_ventana",""),"")).strip()
+    tipo = str(row.get(cm.get("tipo_ventana", ""), "")).strip()
     if tipo == "Horario Específico":
-        s = str(row.get(cm.get("start_dt",""),""))[:16]
-        e = str(row.get(cm.get("end_dt",""),""))[:16]
+        s = str(row.get(cm.get("start_dt", ""), ""))[:16]
+        e = str(row.get(cm.get("end_dt", ""), ""))[:16]
         return f"{s} → {e}"
     elif tipo == "Rango de Horario":
-        turno = str(row.get(cm.get("turno_rango",""),"")).strip()
-        sems  = str(row.get(cm.get("semanas_rango",""),"")).strip()
-        dias  = str(row.get(cm.get("dias_rango",""),"")).strip()
-        return f"Sem {sems} | {dias} | {turno} ({TURNO_HORAS.get(turno,'')})"
+        turno = str(row.get(cm.get("turno_rango", ""), "")).strip()
+        sems  = str(row.get(cm.get("semanas_rango", ""), "")).strip()
+        dias  = str(row.get(cm.get("dias_rango", ""), "")).strip()
+        return f"Sem {sems} | {dias} | {turno} ({TURNO_HORAS.get(turno, '')})"
     elif tipo == "Horario Semi-específico":
-        sems = str(row.get(cm.get("semanas_rango",""),"")).strip()
-        dias = str(row.get(cm.get("dias_rango",""),"")).strip()
-        ts   = str(row.get(cm.get("start_dt",""),""))[:5]
-        te   = str(row.get(cm.get("end_dt",""),""))[:5]
+        sems = str(row.get(cm.get("semanas_rango", ""), "")).strip()
+        dias = str(row.get(cm.get("dias_rango", ""), "")).strip()
+        ts   = str(row.get(cm.get("start_dt", ""), ""))[:5]
+        te   = str(row.get(cm.get("end_dt", ""), ""))[:5]
         return f"Sem {sems} | {dias} | {ts}–{te}"
     return tipo or "—"
 
@@ -118,25 +138,28 @@ def _css():
 # ─────────────────────────────────────────────────────────────
 def _dashboard_global(df_all: pd.DataFrame):
     conn = sqlite3.connect(DB_PATH)
-    try:    total_sistema = int(pd.read_sql_query("SELECT COUNT(*) AS n FROM DATABASE",conn).iloc[0]["n"])
-    except: total_sistema = len(df_all)
-    finally: conn.close()
+    try:
+        total_sistema = int(pd.read_sql_query(
+            "SELECT COUNT(*) AS n FROM DATABASE", conn).iloc[0]["n"])
+    except Exception:
+        total_sistema = len(df_all)
+    finally:
+        conn.close()
 
     total_ag = len(df_all)
     col_e    = _col_estado(df_all)
 
-    # Conteos por estado
     counts = {}
     for est in ESTADOS_META:
-        counts[est] = int((df_all[col_e]==est).sum()) if col_e else 0
+        counts[est] = int((df_all[col_e] == est).sum()) if col_e else 0
 
-    pct_ag    = round(total_ag/total_sistema*100, 1) if total_sistema else 0
-    pct_exito = round(counts["Éxito"]/total_ag*100, 1) if total_ag else 0
+    pct_ag    = round(total_ag / total_sistema * 100, 1) if total_sistema else 0
+    # Migración exitosa sobre total en sistema (no sobre agendadas)
+    pct_exito = round(counts["Éxito"] / total_sistema * 100, 1) if total_sistema else 0
 
     st.markdown('<div class="sec-title">🌐 Estadísticas Globales del Proyecto</div>',
                 unsafe_allow_html=True)
 
-    # Fila 1: totales grandes
     cards_top = f"""
     <div class="mc">
       <div class="mc-card total">
@@ -157,22 +180,20 @@ def _dashboard_global(df_all: pd.DataFrame):
     </div>"""
     st.markdown(cards_top, unsafe_allow_html=True)
 
-    # Fila 2: un card por estado
     estado_cards = '<div class="mc">'
     for est, meta in ESTADOS_META.items():
         cnt = counts[est]
-        pct = round(cnt/total_ag*100,1) if total_ag else 0
+        pct = round(cnt / total_sistema * 100, 1) if total_sistema else 0
         estado_cards += f"""
         <div class="mc-card" style="border-bottom:4px solid {meta['color']};">
           <div class="mc-icon">{meta['icon']}</div>
           <div class="mc-label">{meta['label']}</div>
           <div class="mc-val" style="color:{meta['color']};font-size:1.7rem;">{cnt}</div>
-          <div style="font-size:.68rem;color:#A0AEC0;margin-top:2px;">{pct}% de agendadas</div>
+          <div style="font-size:.68rem;color:#A0AEC0;margin-top:2px;">{pct}% del total</div>
         </div>"""
     estado_cards += "</div>"
     st.markdown(estado_cards, unsafe_allow_html=True)
 
-    # Barras de progreso
     def prog(label, pct, color):
         return f"""
         <div class="prog-bar-wrap">
@@ -192,14 +213,15 @@ def _dashboard_global(df_all: pd.DataFrame):
 # ─────────────────────────────────────────────────────────────
 # Progreso por cliente
 # ─────────────────────────────────────────────────────────────
-def _cliente_progress(df_cli: pd.DataFrame, total_sistema: int, col_e: str | None):
+def _cliente_progress(df_cli: pd.DataFrame, total_sistema: int, col_e):
     total_ag = len(df_cli)
     counts   = {}
     for est in ESTADOS_META:
-        counts[est] = int((df_cli[col_e]==est).sum()) if col_e else 0
+        counts[est] = int((df_cli[col_e] == est).sum()) if col_e else 0
 
-    pct_ag    = round(total_ag/total_sistema*100,1) if total_sistema else 0
-    pct_exito = round(counts["Éxito"]/total_ag*100,1) if total_ag else 0
+    pct_ag    = round(total_ag / total_sistema * 100, 1) if total_sistema else 0
+    # Migración exitosa sobre total en sistema del cliente
+    pct_exito = round(counts["Éxito"] / total_sistema * 100, 1) if total_sistema else 0
 
     cards = '<div class="mc">'
     for est, meta in ESTADOS_META.items():
@@ -223,57 +245,55 @@ def _cliente_progress(df_cli: pd.DataFrame, total_sistema: int, col_e: str | Non
 
     st.markdown(
         prog(f"Agendamiento vs sistema ({total_ag}/{total_sistema})", pct_ag, "#FF7800")
-        + prog(f"Migración completada ({counts['Éxito']}/{total_ag})", pct_exito, "#38A169"),
+        + prog(f"Migración completada ({counts['Éxito']}/{total_sistema})", pct_exito, "#38A169"),
         unsafe_allow_html=True,
     )
 
 
 # ─────────────────────────────────────────────────────────────
-# VM Detail (inline — sin cambio de página)
+# VM Detail inline (estado editor only — no VM editor)
 # ─────────────────────────────────────────────────────────────
 def _vm_detail_inline(vm_id: str, cm: dict, estado_actual: str, cliente: str = ""):
-    """Panel expandible de detalle + editor de estado para una VM en tab_agendados."""
-    # Info de infraestructura desde DATABASE
-    col_vm = cm.get("vm_id","VM_ID_TM")
+    col_vm = cm.get("vm_id", "VM_ID_TM")
     conn   = sqlite3.connect(DB_PATH)
     try:
         df_db = pd.read_sql_query(
             f'SELECT * FROM DATABASE WHERE "{col_vm}"=?', conn, params=(vm_id,))
-    except:
+    except Exception:
         df_db = pd.DataFrame()
     finally:
         conn.close()
 
     row_db = df_db.iloc[0] if not df_db.empty else pd.Series(dtype=object)
+
     def gd(col, default="—"):
-        if col not in row_db.index: return default
+        if col not in row_db.index:
+            return default
         v = str(row_db[col])
-        return default if v in ("nan","None","","<NA>") else v
+        return default if v in ("nan", "None", "", "<NA>") else v
 
     def _mb(v):
-        try: return f"{int(v)/1024:.1f} GB"
-        except: return v
+        try:
+            return f"{int(v)/1024:.1f} GB"
+        except Exception:
+            return v
 
     ip  = gd("Primary IP Address")
     dns = gd("DNS Name")
-    ip_str = ip if ip=="—" else (f"{ip} ({dns})" if dns!="—" else ip)
+    ip_str = ip if ip == "—" else (f"{ip} ({dns})" if dns != "—" else ip)
 
-    # Info cards
     col1, col2 = st.columns(2, gap="medium")
-    def irow(k,v,color=None):
+
+    def irow(k, v, color=None):
         vs = f"color:{color};font-weight:700;" if color else "color:#1E2330;font-weight:600;"
         return (f'<div style="display:flex;justify-content:space-between;padding:7px 0;'
                 f'border-bottom:1px solid #F4F5F7;">'
                 f'<span style="font-size:.74rem;color:#8A95A3;font-weight:600;">{k}</span>'
                 f'<span style="font-size:.78rem;{vs}">{v or "—"}</span></div>')
 
-    AMB = {"PROD":"#E53E3E","DEV":"#38A169","QA":"#D69E2E"}
-    amb = safe_get(row_db, "Ambiente","—") if "Ambiente" in row_db.index else "—"
-
     with col1:
         st.markdown(
-            f'<div style="background:#fff;border:1px solid #E8ECF1;border-radius:10px;'
-            f'padding:12px 14px;">'
+            '<div style="background:#fff;border:1px solid #E8ECF1;border-radius:10px;padding:12px 14px;">'
             + irow("🌐 IP Address", ip_str)
             + irow("💻 VM", gd("VM"))
             + irow("💿 Sistema Op.", gd("OS according to the configuration file"))
@@ -284,8 +304,7 @@ def _vm_detail_inline(vm_id: str, cm: dict, estado_actual: str, cliente: str = "
 
     with col2:
         st.markdown(
-            f'<div style="background:#fff;border:1px solid #E8ECF1;border-radius:10px;'
-            f'padding:12px 14px;">'
+            '<div style="background:#fff;border:1px solid #E8ECF1;border-radius:10px;padding:12px 14px;">'
             + irow("🏢 Datacenter", gd("DATACENTER"))
             + irow("🔗 Cluster", gd("Cluster"))
             + irow("⚡ Powerstate", gd("VM Powerstate"))
@@ -294,7 +313,6 @@ def _vm_detail_inline(vm_id: str, cm: dict, estado_actual: str, cliente: str = "
             + irow("📦 Solución", gd("SOLUTION"))
             + '</div>', unsafe_allow_html=True)
 
-    # Estado editor
     render_status_editor(vm_id, cliente, estado_actual, key_suffix="ag")
 
 
@@ -303,6 +321,7 @@ def _vm_detail_inline(vm_id: str, cm: dict, estado_actual: str, cliente: str = "
 # ─────────────────────────────────────────────────────────────
 def render():
     _css()
+    _migrate_old_states()  # rename legacy Pendiente/Asignada values
 
     df_all = _load_all()
     if df_all.empty:
@@ -310,7 +329,7 @@ def render():
         return
 
     cm      = build_column_map()
-    col_cli = cm.get("cliente","Cliente")
+    col_cli = cm.get("cliente", "Cliente")
     col_e   = _col_estado(df_all)
 
     # ── Dashboard global ──────────────────────────────────
@@ -331,9 +350,9 @@ def render():
             conn = sqlite3.connect(DB_PATH)
             try:
                 total_sis = int(pd.read_sql_query(
-                    f'SELECT COUNT(*) AS n FROM DATABASE WHERE "CUSTOMER_Name_SCCD-TM"=?',
+                    'SELECT COUNT(*) AS n FROM DATABASE WHERE "CUSTOMER_Name_SCCD-TM"=?',
                     conn, params=(cliente_sel,)).iloc[0]["n"])
-            except:
+            except Exception:
                 total_sis = len(df_cli)
             finally:
                 conn.close()
@@ -343,15 +362,14 @@ def render():
                 unsafe_allow_html=True)
             _cliente_progress(df_cli, total_sis, col_e)
 
-    # ── Tabla de VMs agendadas ────────────────────────────
+    # ── Tabla de VMs ──────────────────────────────────────
     with section_card("📋 Detalle de VMs Agendadas"):
         df_view = df_all.copy()
-        if "cliente_sel" in dir() and cliente_sel != "— Ver todos —" and col_cli in df_view.columns:
+        if cliente_sel and cliente_sel != "— Ver todos —" and col_cli in df_view.columns:
             df_view = df_view[df_view[col_cli] == cliente_sel]
 
         df_view["Ventana"] = df_view.apply(lambda r: _fmt_ventana(r, cm), axis=1)
 
-        # Búsqueda + filtros
         busqueda = st.text_input("🔍 Buscar VM, cliente, detalle…", key="ag_busq")
         if busqueda:
             mask = df_view.astype(str).apply(
@@ -360,29 +378,29 @@ def render():
 
         fc1, fc2, fc3 = st.columns(3)
         with fc1:
-            col_a = cm.get("ambiente")
-            amb_f = (st.multiselect("Ambiente:", df_view[col_a].dropna().unique().tolist(), key="ag_f_amb")
-                     if col_a and col_a in df_view.columns else [])
+            col_a  = cm.get("ambiente")
+            amb_f  = (st.multiselect("Ambiente:", df_view[col_a].dropna().unique().tolist(), key="ag_f_amb")
+                      if col_a and col_a in df_view.columns else [])
         with fc2:
-            col_c = cm.get("criticidad")
+            col_c  = cm.get("criticidad")
             crit_f = (st.multiselect("Criticidad:", df_view[col_c].dropna().unique().tolist(), key="ag_f_crit")
                       if col_c and col_c in df_view.columns else [])
         with fc3:
-            est_f = (st.multiselect("Estado:", df_view[col_e].dropna().unique().tolist(), key="ag_f_est")
-                     if col_e else [])
+            est_f  = (st.multiselect("Estado:", df_view[col_e].dropna().unique().tolist(), key="ag_f_est")
+                      if col_e else [])
 
-        if col_a  and amb_f:  df_view = df_view[df_view[col_a].isin(amb_f)]
-        if col_c  and crit_f: df_view = df_view[df_view[col_c].isin(crit_f)]
-        if col_e  and est_f:  df_view = df_view[df_view[col_e].isin(est_f)]
+        if col_a and amb_f:   df_view = df_view[df_view[col_a].isin(amb_f)]
+        if col_c and crit_f:  df_view = df_view[df_view[col_c].isin(crit_f)]
+        if col_e and est_f:   df_view = df_view[df_view[col_e].isin(est_f)]
 
         st.markdown(
             f'<div style="font-size:.74rem;color:#8A95A3;margin-bottom:8px;">'
             f'{len(df_view)} registros</div>', unsafe_allow_html=True)
         st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-    # ── Selección de VM ──────────────────────────────────
-    with section_card("🖥️ Gestionar VM"):
-        col_vm_id = cm.get("vm_id","VM_ID_TM")
+    # ── VM detail (estado only — no VM editor) ────────────
+    with section_card("📊 Estado de Migración"):
+        col_vm_id = cm.get("vm_id", "VM_ID_TM")
         vm_ids    = (sorted(df_view[col_vm_id].dropna().unique().tolist())
                      if col_vm_id in df_view.columns else [])
 
@@ -390,16 +408,17 @@ def render():
             st.info("Sin VMs en la selección actual.")
         else:
             vm_sel = st.selectbox("Seleccionar VM:", vm_ids, key="ag_vm_sel")
-
             if vm_sel:
-                row_vm = df_view[df_view[col_vm_id]==vm_sel]
-                estado_actual = "Agendado"
+                row_vm       = df_view[df_view[col_vm_id] == vm_sel]
+                estado_actual = "Sin Agendar"
                 if not row_vm.empty and col_e and col_e in row_vm.columns:
                     estado_actual = str(row_vm.iloc[0][col_e])
+                cliente_vm = ""
+                if not row_vm.empty and col_cli in row_vm.columns:
+                    cliente_vm = str(row_vm.iloc[0][col_cli])
 
-                # VM header badge
-                color_vm = ESTADO_COLOR_MAP.get(estado_actual,{"color":"#FF7800","icon":"🟠"})["color"]
-                icon_vm  = ESTADO_COLOR_MAP.get(estado_actual,{"color":"#FF7800","icon":"🟠"})["icon"]
+                color_vm = ESTADO_COLOR_MAP.get(estado_actual, {"color": "#FF7800", "icon": "🟠"})["color"]
+                icon_vm  = ESTADO_COLOR_MAP.get(estado_actual, {"color": "#FF7800", "icon": "🟠"})["icon"]
                 st.markdown(f"""
                 <div style="background:#fff;border-radius:12px;border-left:4px solid {color_vm};
                      padding:12px 18px;margin:10px 0;box-shadow:0 1px 4px rgba(0,0,0,.05);
@@ -414,22 +433,5 @@ def render():
                   </div>
                 </div>""", unsafe_allow_html=True)
 
-                # ── Two clearly separated action tabs ────────
-                t_estado, t_agend = st.tabs([
-                    "📊 Estado de Migración (ESTADO_VMS)",
-                    "✏️ Editar Agendamiento (VMs)",
-                ])
-
-                cliente_vm = ""
-                if not row_vm.empty and col_cli in row_vm.columns:
-                    cliente_vm = str(row_vm.iloc[0][col_cli])
-
-                with t_estado:
-                    st.caption("Modifica el estado de migración, fechas y observaciones. "
-                               "Escribe en la tabla **ESTADO_VMS** — no toca el agendamiento.")
-                    _vm_detail_inline(vm_sel, cm, estado_actual, cliente_vm)
-
-                with t_agend:
-                    st.caption("Modifica los datos de agendamiento: VM ID, cliente, horario, etc. "
-                               "Escribe en la tabla **VMs** — no toca el estado de migración.")
-                    render_vm_selector_and_editor(key_suffix="ag_tab")
+                st.caption("Vista de estado de migración. Para editar el agendamiento, usa **📅 Ver Calendario**.")
+                _vm_detail_inline(vm_sel, cm, estado_actual, cliente_vm)
