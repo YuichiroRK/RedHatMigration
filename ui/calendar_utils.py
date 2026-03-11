@@ -10,7 +10,7 @@ from ui.db_utils import build_column_map, safe_get, DB_PATH
 DIAS_ES = {"Lunes":0,"Martes":1,"Miercoles":2,"Jueves":3,"Viernes":4,"Sabado":5,"Domingo":6}
 TURNO_HORAS = {"Mañana":("06:00","14:00"),"Tarde":("14:00","22:00"),"Noche":("22:00","06:00")}
 ESTADO_COLOR = {
-    "Asignada":"#3182CE","Éxito":"#38A169","Pendiente":"#D69E2E",
+    "Agendado":"#3182CE","Éxito":"#38A169","Sin Agendar":"#D69E2E",
     "RollBack":"#E53E3E","Fallida":"#C53030","En Seguimiento":"#805AD5",
 }
 DEFAULT_COLOR = "#FF7800"
@@ -66,7 +66,7 @@ def get_events_for_month(year, month, cliente_filter=None):
     out = {}
     for _, row in df.iterrows():
         tipo   = safe_get(row, cm.get("tipo_ventana"))
-        estado = safe_get(row, cm.get("estado"),"Asignada") or "Asignada"
+        estado = safe_get(row, cm.get("estado"),"Sin Agendar") or "Sin Agendar"
         color  = ESTADO_COLOR.get(estado, DEFAULT_COLOR)
         base   = dict(
             vm_id       = safe_get(row, col_vm_id),
@@ -244,7 +244,7 @@ def build_calendar_html(year, month, events_by_date, selected_date=None, selecte
             flip = " fl" if d.weekday() >= 5 else ""
             body += (
                 f'<div class="pill" style="background:{ev["color"]}">'
-                f'{ev["vm_id"] or "VM"}'
+                f'{ev["cliente"] or ev["vm_id"] or "VM"}'
                 f'<div class="tt{flip}">{_tt(ev)}</div></div>'
             )
         ov = len(evs) - MAX_EV
@@ -264,12 +264,12 @@ def build_calendar_html(year, month, events_by_date, selected_date=None, selecte
 def events_to_df(events):
     if not events: return pd.DataFrame()
     return pd.DataFrame([{
-        "VM ID":      e["vm_id"],
         "Cliente":    e["cliente"],
+        "VM ID":      e["vm_id"],
         "Horario":    f'{e["start_time"]} – {e["end_time"]}',
+        "Estado":     e["estado"],
         "Tipo":       e["tipo_ventana"],
         "Ambiente":   e["ambiente"],
         "Criticidad": e["criticidad"],
-        "Estado":     e["estado"],
         "Apps":       e["apps"],
     } for e in events])

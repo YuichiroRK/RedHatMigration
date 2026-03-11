@@ -19,7 +19,7 @@ from ui.status_widget import render_status_editor
 from ui.vm_editor import render_vm_editor, render_vm_selector_and_editor
 
 ESTADO_ICON = {
-    "Asignada":"🔵","Éxito":"✅","Pendiente":"⏳",
+    "Agendado":"🔵","Éxito":"✅","Sin Agendar":"⏳",
     "RollBack":"↩️","Fallida":"❌","En Seguimiento":"🔍",
 }
 TURNO_DESC  = {"Mañana":"06:00–14:00","Tarde":"14:00–22:00","Noche":"22:00–06:00 (+1d)"}
@@ -102,7 +102,7 @@ def _vm_detail(vm_id: str):
         return default if v in ("nan","None","","<NA>") else v
 
     tipo   = gv("tipo_ventana")
-    estado = gv("estado","Asignada")
+    estado = gv("estado","Sin Agendar")
     ecss   = ESTADO_COLOR.get(estado, DEFAULT_COLOR)
     eicon  = ESTADO_ICON.get(estado,"🟠")
     amb    = gv("ambiente")
@@ -319,7 +319,7 @@ def _vm_detail(vm_id: str):
 # ─────────────────────────────────────────────────────────────
 # Day detail section (shared by both views)
 # ─────────────────────────────────────────────────────────────
-def _day_section(day_evs: list, sel: date, key_prefix: str):
+def _day_section(day_evs: list, sel: date, key_prefix: str, show_table: bool = True):
     """Tabla del día + botones de VM. key_prefix evita duplicados entre vistas."""
     sel_key = sel.strftime("%Y-%m-%d")
 
@@ -327,7 +327,8 @@ def _day_section(day_evs: list, sel: date, key_prefix: str):
         st.info("Sin ventanas en este día.")
         return
 
-    st.dataframe(events_to_df(day_evs), use_container_width=True, hide_index=True)
+    if show_table:
+        st.dataframe(events_to_df(day_evs), use_container_width=True, hide_index=True)
 
     st.markdown(
         '<div style="font-size:.77rem;font-weight:700;color:#4A5568;margin:12px 0 6px;">'
@@ -358,7 +359,7 @@ def _day_section(day_evs: list, sel: date, key_prefix: str):
 def _load_pending_vms(cliente: str) -> pd.DataFrame:
     """
     Returns VMs for a client whose Estado_Migracion is
-    'Asignada', 'Pendiente', or has no entry in ESTADO_VMS.
+    'Agendado', 'Sin Agendar', or has no entry in ESTADO_VMS.
     """
     cm     = build_column_map()
     col_vm  = cm.get("vm_id","VM_ID_TM")
@@ -377,7 +378,7 @@ def _load_pending_vms(cliente: str) -> pd.DataFrame:
             WHERE v."{col_cli}" = ?
               AND (
                 e.Estado_Migracion IS NULL
-                OR e.Estado_Migracion IN ('Asignada','Pendiente')
+                OR e.Estado_Migracion IN ('Agendado','Sin Agendar')
               )
             ORDER BY v.rowid
         """, conn, params=(cliente,))
@@ -394,19 +395,19 @@ def _pending_vms_section(cliente: str):
 
     df = _load_pending_vms(cliente)
     if df.empty:
-        st.info(f"✅ **{cliente}** no tiene VMs pendientes o sin estado.")
+        st.info(f"✅ **{cliente}** no tiene VMs Sin Agendars o sin estado.")
         return
 
     ESTADO_COL = {
-        "Asignada":  "#3182CE",
-        "Pendiente": "#D69E2E",
-        "Sin estado":"#8A95A3",
+        "Agendado":    "#3182CE",
+        "Sin Agendar": "#D69E2E",
+        "Sin estado":  "#8A95A3",
     }
 
     st.markdown(
         f'<div style="font-size:.72rem;font-weight:800;letter-spacing:.08em;'
         f'text-transform:uppercase;color:#FF7800;margin-bottom:8px;">'
-        f'🖥️ VMs pendientes de {cliente} ({len(df)})</div>',
+        f'🖥️ VMs Sin Agendars de {cliente} ({len(df)})</div>',
         unsafe_allow_html=True)
 
     # Grid of buttons — 5 per row
@@ -469,7 +470,7 @@ def render():
 
     # ── Pending VMs for selected client ─────────────────
     if st.session_state["cal_client"] != "— Todos —":
-        with section_card(f"🔍 VMs Pendientes — {st.session_state['cal_client']}"):
+        with section_card(f"🔍 VMs Sin Agendars — {st.session_state['cal_client']}"):
             render_vm_selector_and_editor(key_suffix="cal_pend")
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -565,9 +566,31 @@ def render():
         _day_section(day_evs, sel, "cv")
 
     # ══════════════════════════════════════════════════════
-    # VISTA TABLA — solo el día seleccionado
+    # VISTA TABLA — resumen del mes + detalle del día
     # ══════════════════════════════════════════════════════
     else:
+        # ── Month overview ────────────────────────────────
+        all_evs = [ev for evs in events_by_date.values() for ev in evs]
+        with section_card(f"📋 Todas las ventanas — {MONTH_NAMES_ES[month]} {year}  ({len(all_evs)})"):
+            if all_evs:
+                df_month = events_to_df(all_evs)
+                fc1, fc2, fc3 = st.columns(3)
+                with fc1:
+                    amb_f = st.multiselect("Ambiente:", df_month["Ambiente"].dropna().unique().tolist(), key="ta_amb")
+                with fc2:
+                    est_f = st.multiselect("Estado:",   df_month["Estado"].dropna().unique().tolist(),   key="ta_est")
+                with fc3:
+                    cli_f = st.multiselect("Cliente:",  df_month["Cliente"].dropna().unique().tolist(),  key="ta_cli")
+                if amb_f: df_month = df_month[df_month["Ambiente"].isin(amb_f)]
+                if est_f: df_month = df_month[df_month["Estado"].isin(est_f)]
+                if cli_f: df_month = df_month[df_month["Cliente"].isin(cli_f)]
+                st.dataframe(df_month, use_container_width=True, hide_index=True)
+            else:
+                st.info("Sin ventanas este mes.")
+
+        st.markdown("---")
+
+        # ── Day navigator + day detail ────────────────────
         nav1, nav2, nav3 = st.columns([1, 4, 1])
         with nav1:
             if st.button("◀ Día ant.", key="t_prev", use_container_width=True):
@@ -587,11 +610,10 @@ def render():
                 _set_date(sel + timedelta(days=1))
                 st.rerun()
 
-        with section_card(f"📋 Ventanas del {sel.day} de {MONTH_NAMES_ES[sel.month]} de {sel.year}"):
+        with section_card(f"📋 Ventanas del {sel.day} de {MONTH_NAMES_ES[sel.month]}"):
             if not day_evs:
-                # Show all days with events as quick links
                 if events_by_date:
-                    st.info("Sin ventanas en este día. Días con ventanas este mes:")
+                    st.info("Sin ventanas en este día. Días con ventanas:")
                     dias_con_evs = sorted(events_by_date.keys())
                     btns = st.columns(min(7, len(dias_con_evs)))
                     for col, dk in zip(btns, dias_con_evs[:7]):
@@ -603,15 +625,4 @@ def render():
                                 st.rerun()
                 else:
                     st.info("Sin ventanas este mes.")
-            else:
-                fc1, fc2 = st.columns(2)
-                df_day   = events_to_df(day_evs)
-                with fc1:
-                    amb_f = st.multiselect("Ambiente:", df_day["Ambiente"].dropna().unique().tolist(), key="ta_amb")
-                with fc2:
-                    est_f = st.multiselect("Estado:",   df_day["Estado"].dropna().unique().tolist(),   key="ta_est")
-                if amb_f: df_day = df_day[df_day["Ambiente"].isin(amb_f)]
-                if est_f: df_day = df_day[df_day["Estado"].isin(est_f)]
-                st.dataframe(df_day, use_container_width=True, hide_index=True)
-
-        _day_section(day_evs, sel, "tv")
+        _day_section(day_evs, sel, "tv", show_table=True)

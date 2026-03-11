@@ -11,9 +11,9 @@ import streamlit as st
 from logic.update_status import VALID_STATES, get_vm_status, upsert_vm_status
 
 STATE_META = {
-    "Asignada":       {"color": "#3182CE", "icon": "🔵"},
+    "Agendado":       {"color": "#3182CE", "icon": "🔵"},
     "Éxito":          {"color": "#38A169", "icon": "✅"},
-    "Pendiente":      {"color": "#D69E2E", "icon": "⏳"},
+    "Sin Agendar":    {"color": "#D69E2E", "icon": "⏳"},
     "RollBack":       {"color": "#E53E3E", "icon": "↩️"},
     "Fallida":        {"color": "#C53030", "icon": "❌"},
     "En Seguimiento": {"color": "#805AD5", "icon": "🔍"},
@@ -98,6 +98,23 @@ def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffi
     cur_ffin    = _parse_dt(record.get("Fecha_Finalizacion"))
     cur_obs     = record.get("Observaciones_Fallo") or ""
     if str(cur_obs) in ("nan", "None"): cur_obs = ""
+
+    # ── Point 17: "Sin Agendar" is read-only ────────────
+    if cur_estado == "Sin Agendar":
+        st.markdown(
+            f'<div style="background:#FFFBEB;border:1.5px solid #F6AD55;border-radius:12px;'
+            f'padding:16px 20px;margin-top:16px;">' 
+            f'<div style="font-size:.65rem;font-weight:800;letter-spacing:.09em;'
+            f'text-transform:uppercase;color:#D69E2E;margin-bottom:10px;">⏳ Estado bloqueado</div>'
+            f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' 
+            + _badge("Sin Agendar") +
+            f'</div><div style="font-size:.78rem;color:#744210;font-weight:500;">'
+            f'Las VMs en estado <b>Sin Agendar</b> no pueden modificarse desde aquí. '
+            f'Para cambiar el estado, primero agenda una ventana de mantenimiento '
+            f'desde la pestaña <b>📢 Notificaciones Clientes</b>.</div></div>',
+            unsafe_allow_html=True,
+        )
+        return
 
     # ── Header card ──────────────────────────────────────
     m = STATE_META.get(cur_estado, {"color": "#FF7800", "icon": "🟠"})

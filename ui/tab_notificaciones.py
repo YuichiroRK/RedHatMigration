@@ -99,56 +99,149 @@ def _form_ventana():
     )
     st.markdown("<br>", unsafe_allow_html=True)
 
-    col_a, col_b = st.columns(2, gap="large")
-    with col_a:
-        with section_card("📋 Información General"):
-            en_uso      = st.selectbox("¿La Máquina Virtual está actualmente en Uso?",     ["Si", "No"],                            key="nv_en_uso")
-            ambiente    = st.selectbox("¿En qué ambiente se encuentra la VM?:",    list(DESC_AMBIENTES.keys()),              key="nv_ambiente")
-            ambiente_desc(ambiente)
-            criticidad  = st.selectbox("¿Qué tan crítico fue/será atender al cliente?:", ["Critico", "Alta", "Media", "Baja"],     key="nv_criticidad")
-            motivo_crit = st.text_input("Razón de la criticidad:",                              key="nv_motivo")
+    # ══════════════════════════════════════════════════════
+    # 1. HORARIO — primero
+    # ══════════════════════════════════════════════════════
+    with section_card("🕒 Configuración de Horario"):
 
-    with col_b:
+        # ── Criticidad aquí para condicionar el horario ──
+        st.markdown(
+            '<div style="font-size:.7rem;font-weight:800;letter-spacing:.08em;'
+            'text-transform:uppercase;color:#FF7800;margin-bottom:8px;">⚠️ Criticidad del cliente</div>',
+            unsafe_allow_html=True,
+        )
+        CRIT_DESC = {
+            "Crítico": ("🔴", "Cliente muy complejo de atender. Requiere coordinación especial, múltiples validaciones y acompañamiento técnico cercano."),
+            "Alta":    ("🟠", "Cliente con cierta complejidad. Puede requerir atención adicional pero es manejable con planificación."),
+            "Media":   ("🟡", "Cliente estándar. El proceso es sencillo y no presenta mayores complicaciones."),
+            "Baja":    ("🟢", "Cliente sin complicaciones. El proceso es directo y fluye sin fricciones."),
+        }
+        crit_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
+        for nivel, (icon, desc) in CRIT_DESC.items():
+            crit_html += (
+                f'<div style="flex:1;min-width:160px;background:#F9FAFB;border:1.5px solid #E2E6ED;'
+                f'border-radius:10px;padding:10px 12px;">'
+                f'<div style="font-size:.8rem;font-weight:800;margin-bottom:4px;">{icon} {nivel}</div>'
+                f'<div style="font-size:.72rem;color:#4A5568;line-height:1.4;">{desc}</div>'
+                f'</div>'
+            )
+        crit_html += '</div>'
+        st.markdown(crit_html, unsafe_allow_html=True)
+
+        criticidad = st.selectbox(
+            "Criticidad del cliente:",
+            list(CRIT_DESC.keys()),
+            key="nv_criticidad",
+            label_visibility="collapsed",
+        )
+        motivo_crit = st.text_input("Razón de la criticidad:", key="nv_motivo")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Si Crítico o Alta → advertencia + opción de agendar igual ──
+        es_complejo = criticidad in ("Crítico", "Alta")
+        forzar_agenda = False
+        if es_complejo:
+            st.warning(
+                "⚡ Clientes **Crítico** o **Alta** normalmente no requieren agendar una ventana. "
+                "Se registrarán como tipo **Complejo** — pero puedes agendar igual si ya tienes fecha confirmada."
+            )
+            forzar_agenda = st.checkbox(
+                "📅 Tengo una fecha confirmada, quiero agendar de todas formas",
+                key="nv_forzar_agenda",
+            )
+            if not forzar_agenda:
+                tipo_ventana = "Complejo"
+                start_val = end_val = sem_val = dia_val = turn_val = None
+
+        if not es_complejo or forzar_agenda:
+            # ── Tipo de ventana: Rango primero, luego Específico ──
+            tipo_ventana = st.radio(
+                "Tipo de Ventana:",
+                ["Rango de Horario", "Horario Específico / Semi-específico"],
+                horizontal=True, key="nv_tipo_ventana",
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            start_val = end_val = sem_val = dia_val = turn_val = None
+
+            if tipo_ventana == "Rango de Horario":
+                c1, c2, c3 = st.columns(3, gap="large")
+                with c1: sem_val  = st.multiselect("Semanas:", SEMANAS, key="nv_sem")
+                with c2: dia_val  = st.multiselect("Días:",    DIAS,    key="nv_dia")
+                with c3: turn_val = st.selectbox("Turno:", ["Mañana (6AM a 2PM)","Tarde (2PM a 10PM)","Noche (10PM a 6AM)"], key="nv_turno")
+
+            else:
+                # Toggle: fecha específica vs horas con semanas
+                modo = st.toggle("📅 Usar fechas exactas (desactivado = solo horas + semanas)", key="nv_modo_esp", value=True)
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                if modo:
+                    # Horario Específico
+                    tipo_ventana = "Horario Específico"
+                    c1, c2 = st.columns(2, gap="large")
+                    with c1:
+                        d_i = st.date_input("📅 Fecha Inicio", key="nv_di")
+                        t_i = st.time_input("🕐 Hora Inicio",  key="nv_ti")
+                    with c2:
+                        d_f = st.date_input("📅 Fecha Fin",    key="nv_df")
+                        t_f = st.time_input("🕐 Hora Fin",     key="nv_tf")
+                    start_val, end_val = f"{d_i} {t_i}", f"{d_f} {t_f}"
+                else:
+                    # Horario Semi-específico
+                    tipo_ventana = "Horario Semi-específico"
+                    c1, c2, c3 = st.columns(3, gap="large")
+                    with c1: sem_val = st.multiselect("Semanas:", SEMANAS, key="nv_sem2")
+                    with c2: dia_val = st.multiselect("Días:",    DIAS,    key="nv_dia2")
+                    with c3:
+                        t_i_s = st.time_input("🕐 Hora Inicio", key="nv_tis")
+                        t_f_s = st.time_input("🕐 Hora Fin",    key="nv_tfs")
+                    start_val, end_val = str(t_i_s), str(t_f_s)
+
+    # ══════════════════════════════════════════════════════
+    # 2. DETALLES TÉCNICOS + INFO GENERAL — después del horario
+    # ══════════════════════════════════════════════════════
+    col_a, col_b = st.columns(2, gap="large")
+
+    with col_a:
         with section_card("📝 Detalles Técnicos"):
             apps_lista  = chip_input("Aplicaciones y Servicios:", "nv_apps_chips")
             st.markdown("<br>", unsafe_allow_html=True)
             comentarios = st.text_area("Comentarios Finales:", key="nv_comentarios", height=110)
 
-    with section_card("🕒 Configuración de Horario"):
-        tipo_ventana = st.radio(
-            "Tipo de Ventana:",
-            ["Horario Específico", "Rango de Horario", "Horario Semi-específico"],
-            horizontal=True, key="nv_tipo_ventana",
-        )
-        st.markdown("<br>", unsafe_allow_html=True)
+    with col_b:
+        with section_card("📋 Información General"):
+            en_uso = st.selectbox(
+                "¿La(s) VM(s) están actualmente en Uso?", ["Si", "No"], key="nv_en_uso"
+            )
 
-        start_val = end_val = sem_val = dia_val = turn_val = None
+            # ── Ambiente: mostrar las 3 descripciones primero ──
+            st.markdown(
+                '<div style="font-size:.72rem;font-weight:700;color:#4A5568;margin-bottom:6px;">'
+                'Descripción de ambientes:</div>',
+                unsafe_allow_html=True,
+            )
+            amb_preview = ""
+            for amb_key, (titulo, desc, _) in DESC_AMBIENTES.items():
+                COLOR = {"PROD": "#FFF5F5", "DEV": "#F0FFF4", "QA": "#FEFCBF"}
+                BORDER = {"PROD": "#FC8181", "DEV": "#68D391", "QA": "#F6E05E"}
+                bg  = COLOR.get(amb_key, "#F9FAFB")
+                brd = BORDER.get(amb_key, "#CBD5E0")
+                amb_preview += (
+                    f'<div style="background:{bg};border:1.5px solid {brd};'
+                    f'border-radius:8px;padding:6px 10px;margin-bottom:5px;">'
+                    f'<span style="font-size:.75rem;font-weight:800;">{titulo}</span> '
+                    f'<span style="font-size:.7rem;color:#4A5568;">— {desc}</span>'
+                    f'</div>'
+                )
+            st.markdown(amb_preview, unsafe_allow_html=True)
 
-        if tipo_ventana == "Horario Específico":
-            c1, c2 = st.columns(2, gap="large")
-            with c1:
-                d_i = st.date_input("📅 Fecha Inicio", key="nv_di")
-                t_i = st.time_input("🕐 Hora Inicio",  key="nv_ti")
-            with c2:
-                d_f = st.date_input("📅 Fecha Fin",    key="nv_df")
-                t_f = st.time_input("🕐 Hora Fin",     key="nv_tf")
-            start_val, end_val = f"{d_i} {t_i}", f"{d_f} {t_f}"
+            ambiente = st.selectbox(
+                "Ambiente:", list(DESC_AMBIENTES.keys()), key="nv_ambiente"
+            )
 
-        elif tipo_ventana == "Rango de Horario":
-            c1, c2, c3 = st.columns(3, gap="large")
-            with c1: sem_val  = st.multiselect("Semanas:", SEMANAS, key="nv_sem")
-            with c2: dia_val  = st.multiselect("Días:",    DIAS,    key="nv_dia")
-            with c3: turn_val = st.selectbox("Turno:", ["Mañana","Tarde","Noche"], key="nv_turno")
-
-        elif tipo_ventana == "Horario Semi-específico":
-            c1, c2, c3 = st.columns(3, gap="large")
-            with c1: sem_val = st.multiselect("Semanas:", SEMANAS, key="nv_sem2")
-            with c2: dia_val = st.multiselect("Días:",    DIAS,    key="nv_dia2")
-            with c3:
-                t_i_s = st.time_input("🕐 Hora Inicio", key="nv_tis")
-                t_f_s = st.time_input("🕐 Hora Fin",    key="nv_tfs")
-            start_val, end_val = str(t_i_s), str(t_f_s)
-
+    # ── Botón guardar ─────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
     col_btn, _ = st.columns([2, 5])
     with col_btn:
         if st.button("✅ Guardar Ventana", key="nv_btn_guardar", use_container_width=True):
@@ -158,11 +251,11 @@ def _form_ventana():
                 "descripcion":       DESC_AMBIENTES[ambiente][1],
                 "apps":              ", ".join(apps_lista),
                 "tipo_ventana":      tipo_ventana,
-                "start_dt":          start_val,
-                "end_dt":            end_val,
+                "StartDateTime":     start_val,
+                "EndDateTime":       end_val,
                 "turno_rango":       turn_val,
                 "semanas_rango":     ",".join(sem_val) if sem_val else None,
-                "dias_rango":        ",".join(dia_val) if dia_val else None,
+                "Días_Rango":        ",".join(dia_val) if dia_val else None,
                 "criticidad":        criticidad,
                 "motivo_criticidad": motivo_crit,
                 "comentarios":       comentarios,

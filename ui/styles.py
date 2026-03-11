@@ -235,20 +235,20 @@ html, body, [class*="css"] {
 .stat-exito .icon  { background:#F0FFF4; }
 .stat-exito .value { color:#276749; }
 
-.stat-pendiente { border-color:#FBD38D; }
-.stat-pendiente::before { background:#D69E2E; }
-.stat-pendiente .icon   { background:#FFFFF0; }
-.stat-pendiente .value  { color:#975A16; }
+.stat-Sin Agendar { border-color:#FBD38D; }
+.stat-Sin Agendar::before { background:#D69E2E; }
+.stat-Sin Agendar .icon   { background:#FFFFF0; }
+.stat-Sin Agendar .value  { color:#975A16; }
 
 .stat-rollback { border-color:#FEB2B2; }
 .stat-rollback::before { background:#E53E3E; }
 .stat-rollback .icon   { background:#FFF5F5; }
 .stat-rollback .value  { color:#9B2C2C; }
 
-.stat-asignada { border-color:#D6BCFA; }
-.stat-asignada::before { background:#805AD5; }
-.stat-asignada .icon   { background:#FAF5FF; }
-.stat-asignada .value  { color:#553C9A; }
+.stat-Agendado { border-color:#D6BCFA; }
+.stat-Agendado::before { background:#805AD5; }
+.stat-Agendado .icon   { background:#FAF5FF; }
+.stat-Agendado .value  { color:#553C9A; }
 
 .stat-fallida { border-color:#FEB2B2; }
 .stat-fallida::before { background:#C53030; }
@@ -322,7 +322,7 @@ def page_header():
         <div class="logo">⚙️</div>
         <div>
             <h1>Migración RedHat — Ventanas de Mantenimiento</h1>
-            <p>Gestión y agendamiento de máquinas virtuales pendientes de migración</p>
+            <p>Gestión y agendamiento de máquinas virtuales Sin Agendar de migración</p>
         </div>
     </div>
     """, unsafe_allow_html=True)

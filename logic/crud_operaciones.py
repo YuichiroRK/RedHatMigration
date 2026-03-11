@@ -7,7 +7,7 @@ DB_PATH = 'migraciones.db'
 def sincronizar_vms_pendientes():
     """
     Sincroniza la tabla DATABASE con ESTADO_VMS.
-    Inserta como 'Pendiente' cualquier VM_ID_TM que esté en DATABASE pero no en ESTADO_VMS.
+    Inserta como 'Sin Agendar' cualquier VM_ID_TM que esté en DATABASE pero no en ESTADO_VMS.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -15,7 +15,7 @@ def sincronizar_vms_pendientes():
     # Usamos comillas dobles para la columna CUSTOMER_Name_SCCD-TM por el guion
     query = """
     INSERT INTO ESTADO_VMS (VM_ID_TM, Cliente, Estado_Migracion)
-    SELECT d.VM_ID_TM, d."CUSTOMER_Name_SCCD-TM", 'Pendiente'
+    SELECT d.VM_ID_TM, d."CUSTOMER_Name_SCCD-TM", 'Sin Agendar'
     FROM DATABASE d
     LEFT JOIN ESTADO_VMS e ON d.VM_ID_TM = e.VM_ID_TM
     WHERE e.VM_ID_TM IS NULL
@@ -30,7 +30,7 @@ def sincronizar_vms_pendientes():
 
 def obtener_vms_disponibles(cliente_nombre):
     """
-    Obtiene las VMs de un cliente específico que están marcadas como 'Pendiente'
+    Obtiene las VMs de un cliente específico que están marcadas como 'Sin Agendar'
     y que AÚN NO han sido agendadas en la tabla VMs.
     """
     conn = sqlite3.connect(DB_PATH)
@@ -44,7 +44,7 @@ def obtener_vms_disponibles(cliente_nombre):
     FROM DATABASE d
     LEFT JOIN ESTADO_VMS e ON d.VM_ID_TM = e.VM_ID_TM
     WHERE d."CUSTOMER_Name_SCCD-TM" = ? 
-    AND (e.Estado_Migracion = 'Pendiente' OR e.Estado_Migracion IS NULL)
+    AND (e.Estado_Migracion = 'Sin Agendar' OR e.Estado_Migracion IS NULL)
     AND NOT EXISTS (SELECT 1 FROM VMs v WHERE v.VM_ID_TM = d.VM_ID_TM)
     """
     try:
@@ -56,7 +56,7 @@ def obtener_vms_disponibles(cliente_nombre):
 def guardar_ventana_mantenimiento(cliente, vms_seleccionadas, datos_formulario):
     """
     Guarda la información de agendamiento en la tabla VMs.
-    Además, cambia el estado a 'Asignada' tanto en VMs como en ESTADO_VMS.
+    Además, cambia el estado a 'Agendado' tanto en VMs como en ESTADO_VMS.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -64,7 +64,7 @@ def guardar_ventana_mantenimiento(cliente, vms_seleccionadas, datos_formulario):
     # TRUCO: Asegurarnos de que la tabla VMs tenga la columna Estado
     # Si no la tiene, la crea al vuelo. Si ya la tiene, ignora el error.
     try:
-        cursor.execute("ALTER TABLE VMs ADD COLUMN Estado TEXT DEFAULT 'Asignada'")
+        cursor.execute("ALTER TABLE VMs ADD COLUMN Estado TEXT DEFAULT 'Agendado'")
     except sqlite3.OperationalError:
         pass 
         
@@ -79,7 +79,7 @@ def guardar_ventana_mantenimiento(cliente, vms_seleccionadas, datos_formulario):
         df_base = pd.read_sql_query(query_base, conn, params=vms_seleccionadas)
         
         for _, row in df_base.iterrows():
-            # 1. Insertar en la tabla de agendamiento con Estado = 'Asignada'
+            # 1. Insertar en la tabla de agendamiento con Estado = 'Agendado'
             query_insert = """
             INSERT INTO VMs (
                 Cliente, CID_Seleccionado, VM, VM_ID_TM, "Apps y Servicios",
@@ -108,10 +108,10 @@ def guardar_ventana_mantenimiento(cliente, vms_seleccionadas, datos_formulario):
                 datos_formulario['en_uso'],
                 datos_formulario['ambiente'],
                 datos_formulario['comentarios'],
-                'Asignada' # <--- Inyección directa del estado nuevo
+                'Agendado' # <--- Inyección directa del estado nuevo
             ))
             
-            # 2. Actualizar la tabla ESTADO_VMS para que deje de estar "Pendiente"
+            # 2. Actualizar la tabla ESTADO_VMS para que deje de estar "Sin Agendar" y pase a "Agendado"
             query_update = "UPDATE ESTADO_VMS SET Estado_Migracion = 'Asignada' WHERE VM_ID_TM = ?"
             cursor.execute(query_update, (row['VM_ID_TM'],))
             

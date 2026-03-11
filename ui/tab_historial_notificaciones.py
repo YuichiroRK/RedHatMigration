@@ -136,11 +136,11 @@ def _notif_editor(df_view: pd.DataFrame):
         c1, c2 = st.columns(2)
         with c1:
             est_idx   = ESTADOS_NOTIF.index(cur_estado) if cur_estado in ESTADOS_NOTIF else 0
-            new_estado = st.selectbox("Nuevo Estado:", ESTADOS_NOTIF,
+            new_estado = st.selectbox("Nuevo Estado de la Notificación:", ESTADOS_NOTIF,
                                        index=est_idx, key="hist_new_estado")
         with c2:
             can_idx   = CANALES.index(cur_canal) if cur_canal in CANALES else 0
-            new_canal  = st.selectbox("Canal:", CANALES,
+            new_canal  = st.selectbox("Nuevo Canal de la Notificación:", CANALES,
                                        index=can_idx, key="hist_new_canal")
 
         new_notas = st.text_area("Notas / Observaciones:", value=cur_notas,

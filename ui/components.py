@@ -177,15 +177,15 @@ def dashboard_agendados(df_agendadas: pd.DataFrame):
 
     total_ag    = len(df_agendadas)
     exito       = _cnt("Éxito")
-    pendientes  = _cnt("Pendiente")
+    sin_agendar  = _cnt("Sin Agendar")
     rollback    = _cnt("RollBack")
-    asignadas   = _cnt("Asignada")
+    Agendados   = _cnt("Agendado")
     fallidas    = _cnt("Fallida")
     seguimiento = _cnt("En Seguimiento")
 
-    # Si no hay columna estado, todas son pendientes
+    # Si no hay columna estado, todas son Sin Agendar
     if "estado" not in df_agendadas.columns:
-        pendientes = total_ag
+        sin_agendar = total_ag
 
     # ── Totales globales desde DATABASE ─────────────────────
     try:
@@ -205,7 +205,7 @@ def dashboard_agendados(df_agendadas: pd.DataFrame):
     html += '<div class="stat-grid stat-grid-3">'
     html += _sc("🗃️", "Total VMs en el Sistema", total_global, "stat-total")
     html += _sc("📅", "VMs Agendadas",            total_ag,    "stat-orange")
-    html += _sc("⏸️", "VMs Sin Agendar",          no_agendadas,"stat-pendiente")
+    html += _sc("⏸️", "VMs Sin Agendar",          no_agendadas,"stat-Sin Agendar")
     html += '</div>'
     html += _prog(
         "📊 Progreso de Agendamiento — VMs agendadas vs total del proyecto",
@@ -217,11 +217,11 @@ def dashboard_agendados(df_agendadas: pd.DataFrame):
     html += '<div class="stat-grid">'
     html += _sc("🗄️", "Total Agendadas",              total_ag,             "stat-total")
     html += _sc("✅", "Éxito",                         exito,                "stat-exito")
-    html += _sc("⏳", "Pendientes",                    pendientes,           "stat-pendiente")
+    html += _sc("⏳", "Sin Agendar",                    sin_agendar,           "stat-Sin Agendar")
     html += _sc("↩️", "RollBack",                      rollback,             "stat-rollback")
     html += '</div>'
     html += '<div class="stat-grid">'
-    html += _sc("⚙️", "Asignadas",                    asignadas,            "stat-asignada")
+    html += _sc("⚙️", "Agendados",                    Agendados,            "stat-Agendado")
     html += _sc("❌", "Fallidas",                      fallidas,             "stat-fallida")
     html += _sc("🔍", "En Seguimiento",                seguimiento,          "stat-seguimiento")
     html += _sc("🟢", "Completadas + Seguimiento",     exito + seguimiento,  "stat-exito")

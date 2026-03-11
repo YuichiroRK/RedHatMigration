@@ -14,13 +14,13 @@ from ui.vm_editor import render_vm_editor, render_vm_selector_and_editor
 
 COL_VM_ID = "VM_ID_TM"
 
-TURNO_HORAS = {"Mañana":"06:00–14:00","Tarde":"14:00–22:00","Noche":"22:00–06:00"}
+TURNO_HORAS = {"Mañana (6AM a 2PM)":"06:00–14:00","Tarde (2PM a 10PM)":"14:00–22:00","Noche (10PM a 6AM)":"22:00–06:00"}
 
 # Orden y metadatos de todos los estados posibles
 ESTADOS_META = {
-    "Asignada":       {"icon":"🔵","color":"#3182CE","label":"Asignadas"},
+    "Agendado":       {"icon":"🔵","color":"#3182CE","label":"Agendados"},
     "Éxito":          {"icon":"✅","color":"#38A169","label":"Éxito"},
-    "Pendiente":      {"icon":"⏳","color":"#D69E2E","label":"Pendientes"},
+    "Sin Agendar":    {"icon":"⏳","color":"#D69E2E","label":"Sin Agendar"},
     "En Seguimiento": {"icon":"🔍","color":"#805AD5","label":"Seguimiento"},
     "RollBack":       {"icon":"↩️","color":"#E53E3E","label":"RollBack"},
     "Fallida":        {"icon":"❌","color":"#C53030","label":"Fallidas"},
@@ -40,7 +40,7 @@ def _load_all() -> pd.DataFrame:
         return pd.read_sql_query("""
             SELECT
                 v.*,
-                COALESCE(e.Estado_Migracion, v.Estado, 'Asignada') AS Estado_Migracion,
+                COALESCE(e.Estado_Migracion, v.Estado, 'Agendado') AS Estado_Migracion,
                 e.Fecha_Ejecucion,
                 e.Fecha_Finalizacion,
                 e.Observaciones_Fallo
@@ -393,7 +393,7 @@ def render():
 
             if vm_sel:
                 row_vm = df_view[df_view[col_vm_id]==vm_sel]
-                estado_actual = "Asignada"
+                estado_actual = "Agendado"
                 if not row_vm.empty and col_e and col_e in row_vm.columns:
                     estado_actual = str(row_vm.iloc[0][col_e])
 

@@ -13,7 +13,7 @@ from ui.db_utils import build_column_map, DB_PATH
 DIAS    = ["Lunes","Martes","Miercoles","Jueves","Viernes","Sabado","Domingo"]
 SEMANAS = ["1","2","3","4"]
 TIPOS   = ["Horario Específico","Rango de Horario","Horario Semi-específico"]
-TURNOS  = ["Mañana","Tarde","Noche"]
+TURNOS  = ["Mañana (6AM a 2PM)","Tarde (2PM a 10PM)","Noche (10PM a 6AM)"]
 
 
 def _vms_for_client(cliente: str) -> list:
@@ -88,7 +88,7 @@ def _g(row: pd.Series, col, default=""):
 
 
 def _load_pending_vms_for_client(cliente: str) -> list:
-    """Returns VM IDs with estado Asignada, Pendiente, or no ESTADO_VMS record."""
+    """Returns VM IDs with estado Agendado, Pendiente, or no ESTADO_VMS record."""
     cm     = build_column_map()
     col_vm = cm.get("vm_id","VM_ID_TM")
     col_cli = cm.get("cliente","Cliente")
@@ -101,7 +101,7 @@ def _load_pending_vms_for_client(cliente: str) -> list:
             LEFT JOIN ESTADO_VMS e ON v."{col_vm}" = e."{col_vm}"
             WHERE v."{col_cli}" = ?
               AND (e.Estado_Migracion IS NULL
-                   OR e.Estado_Migracion IN ('Asignada','Pendiente'))
+                   OR e.Estado_Migracion IN ('Agendado','Pendiente'))
             ORDER BY v.rowid
         """, conn, params=(cliente,))
         return df.to_dict("records") if not df.empty else []
@@ -126,7 +126,7 @@ def _load_all_clients() -> list:
 
 
 ESTADO_BADGE = {
-    "Asignada":  ("🔵","#3182CE"),
+    "Agendado":  ("🔵","#3182CE"),
     "Pendiente": ("⏳","#D69E2E"),
     "Sin estado":("⚪","#8A95A3"),
 }
@@ -136,7 +136,7 @@ def render_vm_selector_and_editor(key_suffix: str = "vm_sel"):
     """
     Full self-contained widget:
     1. Select client
-    2. Shows VMs with estado Asignada / Pendiente / Sin estado
+    2. Shows VMs with estado Agendado / Pendiente / Sin estado
     3. Select VM → opens editor
     Useful when you don't have a vm_id in hand yet.
     """
@@ -159,14 +159,14 @@ def render_vm_selector_and_editor(key_suffix: str = "vm_sel"):
     vms = _load_pending_vms_for_client(cliente_sel)
 
     if not vms:
-        st.success(f"✅ **{cliente_sel}** no tiene VMs pendientes o sin estado.")
+        st.success(f"✅ **{cliente_sel}** no tiene VMs Sin Agendar o sin estado.")
         return
 
     with c2:
         vm_opts  = [v["vm_id"] for v in vms]
         vm_label = {v["vm_id"]: v["estado"] for v in vms}
         vm_sel   = st.selectbox(
-            f"VM ({len(vms)} pendientes):",
+            f"VM ({len(vms)} Sin Agendar):",
             vm_opts,
             key=f"vmed_vm_{key_suffix}",
         )
@@ -302,7 +302,7 @@ def render_vm_editor(vm_id: str, key_suffix: str = "", cliente: str = ""):
     elif new_tipo == "Rango de Horario":
         cur_sems = _g(row, col_sem, "").split(",")
         cur_dias = _g(row, col_dia, "").split(",")
-        cur_turn = _g(row, col_turn, "Mañana")
+        cur_turn = _g(row, col_turn, "Mañana (6AM a 2PM)")
         c1, c2, c3 = st.columns(3)
         with c1:
             sel_sem  = st.multiselect("Semanas", SEMANAS,

@@ -268,7 +268,7 @@ def render():
     # ── Controls ─────────────────────────────────────────
     c1, c2, _ = st.columns([1, 1, 3])
     with c1:
-        n_weeks = st.selectbox("Semanas a mostrar:", [4, 8, 12, 16, 24], index=2,
+        n_weeks = st.selectbox("Cantidad de semanas a mostrar:", [4, 8, 12, 16, 24], index=2,
                                 key="stats_nweeks")
     with c2:
         st.markdown("<br>", unsafe_allow_html=True)

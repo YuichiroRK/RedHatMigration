@@ -64,7 +64,7 @@ def render():
     df_vms = obtener_vms_disponibles(cliente_sel)
 
     if df_vms.empty:
-        st.success("✅ Este cliente no tiene máquinas virtuales pendientes de agendar.")
+        st.success("✅ Este cliente no tiene máquinas virtuales Sin Agendar de agendar.")
         return
 
     # ── Selección de VMs (DENTRO del card) ──
@@ -88,7 +88,7 @@ def render():
 
     with col_a:
         with section_card("📋 Información General"):
-            en_uso     = st.selectbox("¿La Máquina Virtual está actualmente en Uso?", ["Si", "No"], key="en_uso")
+            en_uso     = st.selectbox("¿La(s) Máquina(s) Virtual está actualmente en Uso?", ["Si", "No"], key="en_uso")
             ambiente   = st.selectbox("¿En qué ambiente se encuentra la VM?:", list(DESC_AMBIENTES.keys()), key="ambiente")
             ambiente_desc(ambiente)
             criticidad  = st.selectbox("¿Qué tan crítico fue/será atender al cliente?:", ["Critico", "Alta", "Media", "Baja"], key="criticidad")
@@ -130,7 +130,7 @@ def render():
             with c2:
                 dia_val  = st.multiselect("Días:",     DIAS,    key="rango_dia")
             with c3:
-                turn_val = st.selectbox("Turno:", ["Mañana", "Tarde", "Noche"], key="rango_turno")
+                turn_val = st.selectbox("Turno:", ["Mañana (6AM a 2PM)", "Tarde (2PM a 10PM)", "Noche (10PM a 6AM)"], key="rango_turno")
 
         elif tipo_ventana == "Horario Semi-específico":
             c1, c2, c3 = st.columns(3, gap="large")
