@@ -359,7 +359,7 @@ def _day_section(day_evs: list, sel: date, key_prefix: str, show_table: bool = T
 def _load_pending_vms(cliente: str) -> pd.DataFrame:
     """
     Returns VMs for a client whose Estado_Migracion is
-    'Agendado', 'Sin Agendar', or has no entry in ESTADO_VMS.
+    'Asignada', 'Pendiente', or has no entry in ESTADO_VMS.
     """
     cm     = build_column_map()
     col_vm  = cm.get("vm_id","VM_ID_TM")
@@ -395,7 +395,7 @@ def _pending_vms_section(cliente: str):
 
     df = _load_pending_vms(cliente)
     if df.empty:
-        st.info(f"✅ **{cliente}** no tiene VMs Sin Agendars o sin estado.")
+        st.info(f"✅ **{cliente}** no tiene VMs pendientes o sin estado.")
         return
 
     ESTADO_COL = {
@@ -407,7 +407,7 @@ def _pending_vms_section(cliente: str):
     st.markdown(
         f'<div style="font-size:.72rem;font-weight:800;letter-spacing:.08em;'
         f'text-transform:uppercase;color:#FF7800;margin-bottom:8px;">'
-        f'🖥️ VMs Sin Agendars de {cliente} ({len(df)})</div>',
+        f'🖥️ VMs pendientes de {cliente} ({len(df)})</div>',
         unsafe_allow_html=True)
 
     # Grid of buttons — 5 per row
@@ -470,7 +470,7 @@ def render():
 
     # ── Pending VMs for selected client ─────────────────
     if st.session_state["cal_client"] != "— Todos —":
-        with section_card(f"🔍 VMs Sin Agendars — {st.session_state['cal_client']}"):
+        with section_card(f"🔍 VMs Pendientes — {st.session_state['cal_client']}"):
             render_vm_selector_and_editor(key_suffix="cal_pend")
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -499,13 +499,18 @@ def render():
                 st.session_state["cal_month"] += 1
             st.rerun()
 
-    # ── Load events ───────────────────────────────────────
+    # ── Load events — only show Agendado VMs ─────────────
     cliente_filter = None if st.session_state["cal_client"] == "— Todos —" else st.session_state["cal_client"]
-    events_by_date = get_events_for_month(
+    _raw_events = get_events_for_month(
         st.session_state["cal_year"],
         st.session_state["cal_month"],
         cliente_filter,
     )
+    events_by_date = {
+        dk: [ev for ev in evs if ev.get("estado") == "Agendado"]
+        for dk, evs in _raw_events.items()
+        if any(ev.get("estado") == "Agendado" for ev in evs)
+    }
 
     sel     = st.session_state["cal_date"]
     sel_key = sel.strftime("%Y-%m-%d")
@@ -566,27 +571,49 @@ def render():
         _day_section(day_evs, sel, "cv")
 
     # ══════════════════════════════════════════════════════
-    # VISTA TABLA — resumen del mes + detalle del día
+    # VISTA TABLA — resumen semana/mes + detalle del día
     # ══════════════════════════════════════════════════════
     else:
-        # ── Month overview ────────────────────────────────
-        all_evs = [ev for evs in events_by_date.values() for ev in evs]
-        with section_card(f"📋 Todas las ventanas — {MONTH_NAMES_ES[month]} {year}  ({len(all_evs)})"):
-            if all_evs:
-                df_month = events_to_df(all_evs)
+        # ── Semana / Mes toggle ───────────────────────────
+        import calendar as _cal_mod
+        tab_rng = st.radio(
+            "Rango:", ["📅 Semana", "🗓️ Mes"],
+            horizontal=True, key="ta_rango",
+        )
+
+        if tab_rng == "📅 Semana":
+            # ISO week containing sel
+            week_start = sel - timedelta(days=sel.weekday())
+            week_end   = week_start + timedelta(days=6)
+            rng_evs = [
+                ev
+                for dk, evs in events_by_date.items()
+                for ev in evs
+                if week_start <= date.fromisoformat(dk) <= week_end
+            ]
+            card_title = (f"📋 Semana {sel.isocalendar()[1]} "
+                          f"({week_start.strftime('%d/%m')} – {week_end.strftime('%d/%m/%Y')}) "
+                          f"— {len(rng_evs)} ventanas")
+        else:
+            rng_evs    = [ev for evs in events_by_date.values() for ev in evs]
+            card_title = f"📋 Todas las ventanas — {MONTH_NAMES_ES[month]} {year}  ({len(rng_evs)})"
+
+        with section_card(card_title):
+            if rng_evs:
+                df_rng = events_to_df(rng_evs)
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
-                    amb_f = st.multiselect("Ambiente:", df_month["Ambiente"].dropna().unique().tolist(), key="ta_amb")
+                    amb_f = st.multiselect("Ambiente:", df_rng["Ambiente"].dropna().unique().tolist(), key="ta_amb")
                 with fc2:
-                    est_f = st.multiselect("Estado:",   df_month["Estado"].dropna().unique().tolist(),   key="ta_est")
+                    est_f = st.multiselect("Estado:",   df_rng["Estado"].dropna().unique().tolist(),   key="ta_est")
                 with fc3:
-                    cli_f = st.multiselect("Cliente:",  df_month["Cliente"].dropna().unique().tolist(),  key="ta_cli")
-                if amb_f: df_month = df_month[df_month["Ambiente"].isin(amb_f)]
-                if est_f: df_month = df_month[df_month["Estado"].isin(est_f)]
-                if cli_f: df_month = df_month[df_month["Cliente"].isin(cli_f)]
-                st.dataframe(df_month, use_container_width=True, hide_index=True)
+                    cli_f = st.multiselect("Cliente:",  df_rng["Cliente"].dropna().unique().tolist(),  key="ta_cli")
+                if amb_f: df_rng = df_rng[df_rng["Ambiente"].isin(amb_f)]
+                if est_f: df_rng = df_rng[df_rng["Estado"].isin(est_f)]
+                if cli_f: df_rng = df_rng[df_rng["Cliente"].isin(cli_f)]
+                st.dataframe(df_rng, use_container_width=True, hide_index=True)
             else:
-                st.info("Sin ventanas este mes.")
+                st.info("Sin ventanas en este período.")
 
         st.markdown("---")
 

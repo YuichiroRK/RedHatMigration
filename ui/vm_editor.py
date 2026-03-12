@@ -13,7 +13,7 @@ from ui.db_utils import build_column_map, DB_PATH
 DIAS    = ["Lunes","Martes","Miercoles","Jueves","Viernes","Sabado","Domingo"]
 SEMANAS = ["1","2","3","4"]
 TIPOS   = ["Horario Específico","Rango de Horario","Horario Semi-específico"]
-TURNOS  = ["Mañana (6AM a 2PM)","Tarde (2PM a 10PM)","Noche (10PM a 6AM)"]
+TURNOS  = ["Mañana","Tarde","Noche"]
 
 
 def _vms_for_client(cliente: str) -> list:
@@ -88,7 +88,7 @@ def _g(row: pd.Series, col, default=""):
 
 
 def _load_pending_vms_for_client(cliente: str) -> list:
-    """Returns VM IDs with estado Agendado, Pendiente, or no ESTADO_VMS record."""
+    """Returns VM IDs with estado Asignada, Pendiente, or no ESTADO_VMS record."""
     cm     = build_column_map()
     col_vm = cm.get("vm_id","VM_ID_TM")
     col_cli = cm.get("cliente","Cliente")
@@ -101,7 +101,7 @@ def _load_pending_vms_for_client(cliente: str) -> list:
             LEFT JOIN ESTADO_VMS e ON v."{col_vm}" = e."{col_vm}"
             WHERE v."{col_cli}" = ?
               AND (e.Estado_Migracion IS NULL
-                   OR e.Estado_Migracion IN ('Agendado','Pendiente'))
+                   OR e.Estado_Migracion IN ('Asignada','Pendiente'))
             ORDER BY v.rowid
         """, conn, params=(cliente,))
         return df.to_dict("records") if not df.empty else []
@@ -126,7 +126,7 @@ def _load_all_clients() -> list:
 
 
 ESTADO_BADGE = {
-    "Agendado":  ("🔵","#3182CE"),
+    "Asignada":  ("🔵","#3182CE"),
     "Pendiente": ("⏳","#D69E2E"),
     "Sin estado":("⚪","#8A95A3"),
 }
@@ -136,7 +136,7 @@ def render_vm_selector_and_editor(key_suffix: str = "vm_sel"):
     """
     Full self-contained widget:
     1. Select client
-    2. Shows VMs with estado Agendado / Pendiente / Sin estado
+    2. Shows VMs with estado Asignada / Pendiente / Sin estado
     3. Select VM → opens editor
     Useful when you don't have a vm_id in hand yet.
     """
@@ -159,14 +159,14 @@ def render_vm_selector_and_editor(key_suffix: str = "vm_sel"):
     vms = _load_pending_vms_for_client(cliente_sel)
 
     if not vms:
-        st.success(f"✅ **{cliente_sel}** no tiene VMs Sin Agendar o sin estado.")
+        st.success(f"✅ **{cliente_sel}** no tiene VMs pendientes o sin estado.")
         return
 
     with c2:
         vm_opts  = [v["vm_id"] for v in vms]
         vm_label = {v["vm_id"]: v["estado"] for v in vms}
         vm_sel   = st.selectbox(
-            f"VM ({len(vms)} Sin Agendar):",
+            f"VM ({len(vms)} pendientes):",
             vm_opts,
             key=f"vmed_vm_{key_suffix}",
         )
@@ -290,54 +290,184 @@ def render_vm_editor(vm_id: str, key_suffix: str = "", cliente: str = ""):
 
     new_start = new_end = new_sem = new_dia = new_turn = ""
 
+    # ── helper: parse stored datetime strings ────────────────
+    import datetime as _dt
+
+    def _parse_dt(raw: str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try: return _dt.datetime.strptime(raw.strip(), fmt)
+            except: pass
+        return None
+
+    def _parse_time(raw: str):
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try: return _dt.datetime.strptime(raw.strip()[:8], fmt).time()
+            except: pass
+        return _dt.time(0, 0)
+
+    def _dt_section_card(content_fn):
+        """Thin styled wrapper around datetime pickers."""
+        st.markdown(
+            '<div style="background:#F9FAFB;border:1.5px solid #E2E6ED;border-radius:12px;'
+            'padding:14px 16px;margin-top:8px;">',
+            unsafe_allow_html=True,
+        )
+        content_fn()
+        st.markdown("</div>", unsafe_allow_html=True)
+
     if new_tipo == "Horario Específico":
-        c1, c2 = st.columns(2)
-        with c1:
-            new_start = st.text_input("Inicio (YYYY-MM-DD HH:MM:SS)",
-                                       value=_g(row, col_s), key=f"ed_s_{k}")
-        with c2:
-            new_end   = st.text_input("Fin (YYYY-MM-DD HH:MM:SS)",
-                                       value=_g(row, col_e), key=f"ed_e_{k}")
+        raw_s = _g(row, col_s)
+        raw_e = _g(row, col_e)
+        dt_s  = _parse_dt(raw_s)
+        dt_e  = _parse_dt(raw_e)
+
+        st.markdown(
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px;">',
+            unsafe_allow_html=True)
+
+        # Start block
+        st.markdown(
+            '<div style="background:#F0FFF4;border:1.5px solid #9AE6B4;border-radius:12px;padding:14px 16px;">'
+            '<div style="font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;'
+            'color:#276749;margin-bottom:10px;">📅 Inicio de Ventana</div>',
+            unsafe_allow_html=True)
+        c1i, c2i = st.columns(2)
+        with c1i:
+            d_i = st.date_input("Fecha inicio", value=dt_s.date() if dt_s else None,
+                                 key=f"ed_di_{k}", label_visibility="collapsed",
+                                 help="Fecha de inicio de la ventana")
+            st.caption("📅 Fecha inicio")
+        with c2i:
+            t_i = st.time_input("Hora inicio", value=dt_s.time() if dt_s else _dt.time(0,0),
+                                 key=f"ed_ti_{k}", label_visibility="collapsed",
+                                 help="Hora de inicio")
+            st.caption("🕐 Hora inicio")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # End block
+        st.markdown(
+            '<div style="background:#FFF5F5;border:1.5px solid #FC8181;border-radius:12px;padding:14px 16px;">'
+            '<div style="font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;'
+            'color:#9B2C2C;margin-bottom:10px;">🏁 Fin de Ventana</div>',
+            unsafe_allow_html=True)
+        c1f, c2f = st.columns(2)
+        with c1f:
+            d_f = st.date_input("Fecha fin", value=dt_e.date() if dt_e else None,
+                                 key=f"ed_df_{k}", label_visibility="collapsed",
+                                 help="Fecha de fin de la ventana")
+            st.caption("📅 Fecha fin")
+        with c2f:
+            t_f = st.time_input("Hora fin", value=dt_e.time() if dt_e else _dt.time(0,0),
+                                 key=f"ed_tf_{k}", label_visibility="collapsed",
+                                 help="Hora de fin")
+            st.caption("🕐 Hora fin")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        new_start = f"{d_i} {t_i}" if d_i else ""
+        new_end   = f"{d_f} {t_f}" if d_f else ""
+
+        # Live preview
+        if d_i and d_f:
+            dur = (_dt.datetime.combine(d_f, t_f) - _dt.datetime.combine(d_i, t_i))
+            h, rem = divmod(int(dur.total_seconds()), 3600)
+            dur_str = f"{h}h {rem//60}min" if dur.total_seconds() >= 0 else "⚠️ Fin anterior al inicio"
+            st.markdown(
+                f'<div style="margin-top:10px;background:#EBF8FF;border:1px solid #90CDF4;'
+                f'border-radius:8px;padding:8px 14px;font-size:.78rem;color:#2B6CB0;font-weight:600;">'
+                f'⏱ Duración estimada: <strong>{dur_str}</strong> &nbsp;·&nbsp; '
+                f'{d_i.strftime("%d/%m/%Y")} {t_i.strftime("%H:%M")} → '
+                f'{d_f.strftime("%d/%m/%Y")} {t_f.strftime("%H:%M")}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     elif new_tipo == "Rango de Horario":
-        cur_sems = _g(row, col_sem, "").split(",")
-        cur_dias = _g(row, col_dia, "").split(",")
-        cur_turn = _g(row, col_turn, "Mañana (6AM a 2PM)")
+        cur_sems = [s.strip() for s in _g(row, col_sem, "").split(",") if s.strip()]
+        cur_dias = [d.strip() for d in _g(row, col_dia, "").split(",") if d.strip()]
+        cur_turn = _g(row, col_turn, "Mañana")
+
+        st.markdown(
+            '<div style="background:#FFFFF0;border:1.5px solid #ECC94B;border-radius:12px;'
+            'padding:14px 16px;margin-top:8px;">',
+            unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;'
+            'color:#744210;margin-bottom:10px;">📆 Rango de Horario</div>',
+            unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            sel_sem  = st.multiselect("Semanas", SEMANAS,
-                                       default=[s for s in cur_sems if s in SEMANAS],
-                                       key=f"ed_sem_{k}")
+            st.caption("📅 Semanas del mes")
+            sel_sem = st.multiselect("Semanas", SEMANAS,
+                                      default=[s for s in cur_sems if s in SEMANAS],
+                                      key=f"ed_sem_{k}", label_visibility="collapsed")
         with c2:
-            sel_dia  = st.multiselect("Días", DIAS,
-                                       default=[d for d in cur_dias if d in DIAS],
-                                       key=f"ed_dia_{k}")
+            st.caption("📅 Días de la semana")
+            sel_dia = st.multiselect("Días", DIAS,
+                                      default=[d for d in cur_dias if d in DIAS],
+                                      key=f"ed_dia_{k}", label_visibility="collapsed")
         with c3:
+            st.caption("🕒 Turno")
             turn_idx = TURNOS.index(cur_turn) if cur_turn in TURNOS else 0
-            sel_turn = st.selectbox("Turno", TURNOS, index=turn_idx, key=f"ed_turn_{k}")
+            sel_turn = st.selectbox("Turno", TURNOS, index=turn_idx,
+                                     key=f"ed_turn_{k}", label_visibility="collapsed")
+        TURNO_HORAS_DISP = {"Mañana":"06:00 – 14:00","Tarde":"14:00 – 22:00","Noche":"22:00 – 06:00 (+1d)"}
+        st.markdown(
+            f'<div style="margin-top:8px;font-size:.76rem;color:#744210;font-weight:600;">'
+            f'🕒 Horario del turno <strong>{sel_turn}</strong>: {TURNO_HORAS_DISP.get(sel_turn,"")}</div>',
+            unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
         new_sem  = ",".join(sel_sem)
         new_dia  = ",".join(sel_dia)
         new_turn = sel_turn
 
     elif new_tipo == "Horario Semi-específico":
-        cur_sems = _g(row, col_sem, "").split(",")
-        cur_dias = _g(row, col_dia, "").split(",")
-        c1, c2, c3 = st.columns(3)
+        cur_sems = [s.strip() for s in _g(row, col_sem, "").split(",") if s.strip()]
+        cur_dias = [d.strip() for d in _g(row, col_dia, "").split(",") if d.strip()]
+
+        st.markdown(
+            '<div style="background:#FAF5FF;border:1.5px solid #D6BCFA;border-radius:12px;'
+            'padding:14px 16px;margin-top:8px;">',
+            unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;'
+            'color:#553C9A;margin-bottom:10px;">🕒 Horario Semi-específico</div>',
+            unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
         with c1:
+            st.caption("📅 Semanas del mes")
             sel_sem = st.multiselect("Semanas", SEMANAS,
                                       default=[s for s in cur_sems if s in SEMANAS],
-                                      key=f"ed_sem2_{k}")
-        with c2:
+                                      key=f"ed_sem2_{k}", label_visibility="collapsed")
+            st.caption("📅 Días de la semana")
             sel_dia = st.multiselect("Días", DIAS,
                                       default=[d for d in cur_dias if d in DIAS],
-                                      key=f"ed_dia2_{k}")
-        with c3:
-            new_start = st.text_input("Hora inicio (HH:MM)", value=_g(row, col_s, "")[:5],
-                                       key=f"ed_hs_{k}")
-            new_end   = st.text_input("Hora fin (HH:MM)",    value=_g(row, col_e, "")[:5],
-                                       key=f"ed_he_{k}")
-        new_sem = ",".join(sel_sem)
-        new_dia = ",".join(sel_dia)
+                                      key=f"ed_dia2_{k}", label_visibility="collapsed")
+        with c2:
+            t_i_raw = _g(row, col_s, "")[:5]
+            t_f_raw = _g(row, col_e, "")[:5]
+            t_i_val = _parse_time(t_i_raw)
+            t_f_val = _parse_time(t_f_raw)
+            st.caption("🕐 Hora inicio")
+            t_i_s = st.time_input("Hora inicio", value=t_i_val, key=f"ed_hs_{k}",
+                                   label_visibility="collapsed")
+            st.caption("🕐 Hora fin")
+            t_f_s = st.time_input("Hora fin",    value=t_f_val, key=f"ed_he_{k}",
+                                   label_visibility="collapsed")
+            dur_min = (_dt.datetime.combine(_dt.date.today(), t_f_s)
+                       - _dt.datetime.combine(_dt.date.today(), t_i_s)).seconds // 60
+            st.markdown(
+                f'<div style="margin-top:8px;font-size:.75rem;color:#553C9A;font-weight:600;">'
+                f'⏱ {t_i_s.strftime("%H:%M")} → {t_f_s.strftime("%H:%M")} '
+                f'({dur_min//60}h {dur_min%60}min)</div>',
+                unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        new_sem   = ",".join(sel_sem)
+        new_dia   = ",".join(sel_dia)
+        new_start = t_i_s.strftime("%H:%M")
+        new_end   = t_f_s.strftime("%H:%M")
 
     # ── Row 4: Apps / Comentarios ─────────────────────────
     st.markdown('<div style="font-size:.7rem;font-weight:800;letter-spacing:.09em;'

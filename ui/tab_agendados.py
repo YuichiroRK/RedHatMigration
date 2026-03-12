@@ -146,20 +146,21 @@ def _dashboard_global(df_all: pd.DataFrame):
     finally:
         conn.close()
 
-    total_ag = len(df_all)
-    col_e    = _col_estado(df_all)
+    total_ag      = len(df_all)
+    sin_contactar = total_sistema - total_ag
+    col_e         = _col_estado(df_all)
 
     counts = {}
     for est in ESTADOS_META:
         counts[est] = int((df_all[col_e] == est).sum()) if col_e else 0
 
     pct_ag    = round(total_ag / total_sistema * 100, 1) if total_sistema else 0
-    # Migración exitosa sobre total en sistema (no sobre agendadas)
     pct_exito = round(counts["Éxito"] / total_sistema * 100, 1) if total_sistema else 0
 
     st.markdown('<div class="sec-title">🌐 Estadísticas Globales del Proyecto</div>',
                 unsafe_allow_html=True)
 
+    # ── Top summary cards (not clickable) ────────────────
     cards_top = f"""
     <div class="mc">
       <div class="mc-card total">
@@ -168,32 +169,103 @@ def _dashboard_global(df_all: pd.DataFrame):
         <div class="mc-val">{total_sistema}</div>
       </div>
       <div class="mc-card total">
-        <div class="mc-icon">📅</div>
-        <div class="mc-label">Agendadas</div>
+        <div class="mc-icon">🔧</div>
+        <div class="mc-label">Trabajadas</div>
         <div class="mc-val">{total_ag}</div>
+        <div style="font-size:.66rem;color:#A0AEC0;margin-top:2px;">con algún estado asignado</div>
       </div>
       <div class="mc-card total">
-        <div class="mc-icon">⏸️</div>
-        <div class="mc-label">Sin Agendar</div>
-        <div class="mc-val">{total_sistema - total_ag}</div>
+        <div class="mc-icon">📭</div>
+        <div class="mc-label">Sin Contactar</div>
+        <div class="mc-val">{sin_contactar}</div>
+        <div style="font-size:.66rem;color:#A0AEC0;margin-top:2px;">sin estado en el sistema</div>
       </div>
     </div>"""
     st.markdown(cards_top, unsafe_allow_html=True)
 
-    estado_cards = '<div class="mc">'
-    for est, meta in ESTADOS_META.items():
+    # ── Estado cards — clickable via st.columns + buttons ─
+    cols = st.columns(len(ESTADOS_META))
+    active = st.session_state.get("ag_dash_estado", None)
+    for col, (est, meta) in zip(cols, ESTADOS_META.items()):
         cnt = counts[est]
         pct = round(cnt / total_sistema * 100, 1) if total_sistema else 0
-        estado_cards += f"""
-        <div class="mc-card" style="border-bottom:4px solid {meta['color']};">
-          <div class="mc-icon">{meta['icon']}</div>
-          <div class="mc-label">{meta['label']}</div>
-          <div class="mc-val" style="color:{meta['color']};font-size:1.7rem;">{cnt}</div>
-          <div style="font-size:.68rem;color:#A0AEC0;margin-top:2px;">{pct}% del total</div>
-        </div>"""
-    estado_cards += "</div>"
-    st.markdown(estado_cards, unsafe_allow_html=True)
+        border = "3px solid " + meta["color"] if est == active else "1px solid #E2E6ED"
+        bg     = "#FFF8F3" if est == active else "#fff"
+        with col:
+            st.markdown(
+                f'<div style="background:{bg};border:{border};border-radius:12px;border-bottom:4px solid {meta["color"]};padding:14px 10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.05);margin-bottom:4px;"><div style="font-size:1.3rem;">{meta["icon"]}</div><div style="font-size:.68rem;color:#8A95A3;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin:4px 0 2px;">{meta["label"]}</div><div style="font-size:1.7rem;font-weight:800;color:{meta["color"]};line-height:1.1;">{cnt}</div><div style="font-size:.64rem;color:#A0AEC0;margin-top:2px;">{pct}% del total</div></div>',
+                unsafe_allow_html=True,
+            )
+            label_btn = f"{'✔ ' if est == active else ''}Ver VMs"
+            if st.button(label_btn, key=f"ag_dash_btn_{est}", use_container_width=True):
+                # Toggle: click same state again to deselect
+                st.session_state["ag_dash_estado"] = None if est == active else est
+                st.rerun()
 
+    # ── VM summary for selected estado ────────────────────
+    if active and col_e:
+        df_filt = df_all[df_all[col_e] == active].copy()
+        cm_tmp  = build_column_map()
+        col_vm  = cm_tmp.get("vm_id","VM_ID_TM")
+        col_cli = cm_tmp.get("cliente","Cliente")
+        col_amb = cm_tmp.get("ambiente","Ambiente")
+        col_crit= cm_tmp.get("criticidad","Criticidad")
+        # Extra date cols for filtering
+        col_ini = cm_tmp.get("start_dt","StartDateTime")
+        col_fin = "Fecha_Finalizacion"
+        meta_a  = ESTADOS_META[active]
+
+        st.markdown(
+            f'<div style="margin:10px 0 6px;font-size:.8rem;font-weight:800;color:{meta_a["color"]};">{meta_a["icon"]} VMs en estado {active}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Inline mini-filters ───────────────────────────
+        fk = f"ag_df_{active}"   # unique prefix per estado
+        fi1, fi2, fi3, fi4 = st.columns([1.5, 1, 1, 1])
+        with fi1:
+            clis_disp = sorted(df_filt[col_cli].dropna().unique().tolist()) if col_cli in df_filt.columns else []
+            cli_f = st.multiselect("👤 Cliente", clis_disp, key=f"{fk}_cli",
+                                   placeholder="Todos los clientes", label_visibility="collapsed")
+        with fi2:
+            amb_disp = sorted(df_filt[col_amb].dropna().unique().tolist()) if col_amb in df_filt.columns else []
+            amb_f = st.multiselect("Ambiente", amb_disp, key=f"{fk}_amb",
+                                   placeholder="Ambiente", label_visibility="collapsed")
+        with fi3:
+            # Date from — uses Fecha_Finalizacion if available, else StartDateTime
+            date_col_avail = col_fin if col_fin in df_filt.columns else (col_ini if col_ini in df_filt.columns else None)
+            fecha_desde = st.date_input("📅 Desde", value=None, key=f"{fk}_desde",
+                                        label_visibility="collapsed")
+        with fi4:
+            fecha_hasta = st.date_input("📅 Hasta", value=None, key=f"{fk}_hasta",
+                                        label_visibility="collapsed")
+
+        # Apply filters
+        if cli_f and col_cli in df_filt.columns:
+            df_filt = df_filt[df_filt[col_cli].isin(cli_f)]
+        if amb_f and col_amb in df_filt.columns:
+            df_filt = df_filt[df_filt[col_amb].isin(amb_f)]
+        if date_col_avail and (fecha_desde or fecha_hasta):
+            import pandas as _pd
+            def _to_d(v):
+                try: return _pd.to_datetime(str(v)[:10]).date()
+                except: return None
+            df_filt["_tmpd"] = df_filt[date_col_avail].map(_to_d)
+            if fecha_desde:
+                df_filt = df_filt[df_filt["_tmpd"].apply(lambda d: d is not None and d >= fecha_desde)]
+            if fecha_hasta:
+                df_filt = df_filt[df_filt["_tmpd"].apply(lambda d: d is not None and d <= fecha_hasta)]
+            df_filt = df_filt.drop(columns=["_tmpd"])
+
+        show_cols = [c for c in [col_vm, col_cli, col_amb, col_crit,
+                                  col_ini, col_fin] if c in df_filt.columns]
+        st.caption(f"{len(df_filt)} VM(s) • filtra por cliente, ambiente o fechas arriba")
+        st.dataframe(
+            df_filt[show_cols] if show_cols else df_filt,
+            use_container_width=True, hide_index=True,
+        )
+
+    # ── Progress bars ─────────────────────────────────────
     def prog(label, pct, color):
         return f"""
         <div class="prog-bar-wrap">
@@ -204,7 +276,7 @@ def _dashboard_global(df_all: pd.DataFrame):
         </div>"""
 
     st.markdown(
-        prog(f"📅 Agendamiento — {total_ag} de {total_sistema}", pct_ag, "#FF7800")
+        prog(f"🔧 Trabajadas — {total_ag} de {total_sistema}", pct_ag, "#FF7800")
         + prog(f"✅ Migración completada — {counts['Éxito']} de {total_sistema}", pct_exito, "#38A169"),
         unsafe_allow_html=True,
     )
@@ -401,15 +473,28 @@ def render():
     # ── VM detail (estado only — no VM editor) ────────────
     with section_card("📊 Estado de Migración"):
         col_vm_id = cm.get("vm_id", "VM_ID_TM")
-        vm_ids    = (sorted(df_view[col_vm_id].dropna().unique().tolist())
-                     if col_vm_id in df_view.columns else [])
+
+        # ── Client filter (independent of progress selector above) ──
+        clientes_all = (sorted(df_all[col_cli].dropna().unique().tolist())
+                        if col_cli in df_all.columns else [])
+        ed_cliente = st.selectbox(
+            "Cliente:",
+            ["— Todos —"] + clientes_all,
+            key="ag_ed_cliente",
+        )
+        df_ed = df_all.copy()
+        if ed_cliente and ed_cliente != "— Todos —":
+            df_ed = df_ed[df_ed[col_cli] == ed_cliente]
+
+        vm_ids = (sorted(df_ed[col_vm_id].dropna().unique().tolist())
+                  if col_vm_id in df_ed.columns else [])
 
         if not vm_ids:
             st.info("Sin VMs en la selección actual.")
         else:
             vm_sel = st.selectbox("Seleccionar VM:", vm_ids, key="ag_vm_sel")
             if vm_sel:
-                row_vm       = df_view[df_view[col_vm_id] == vm_sel]
+                row_vm       = df_ed[df_ed[col_vm_id] == vm_sel]
                 estado_actual = "Sin Agendar"
                 if not row_vm.empty and col_e and col_e in row_vm.columns:
                     estado_actual = str(row_vm.iloc[0][col_e])

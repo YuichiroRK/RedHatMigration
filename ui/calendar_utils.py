@@ -267,6 +267,7 @@ def events_to_df(events):
         "Cliente":    e["cliente"],
         "VM ID":      e["vm_id"],
         "Horario":    f'{e["start_time"]} – {e["end_time"]}',
+        "Fecha":      e.get("date", ""),
         "Estado":     e["estado"],
         "Tipo":       e["tipo_ventana"],
         "Ambiente":   e["ambiente"],

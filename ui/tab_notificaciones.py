@@ -281,10 +281,13 @@ def _cliente_selector(clientes_lista: list) -> list:
         # ── Paste area ───────────────────────────────────
         paste_raw = st.text_area(
             "📋 Pegar clientes (Ctrl+V — uno por línea o separados por coma):",
+            value=st.session_state.get("_notif_paste_store", ""),
             key="notif_paste",
             height=75,
             placeholder="Pega aquí la lista de clientes…",
         )
+        # Keep store in sync
+        st.session_state["_notif_paste_store"] = paste_raw
 
         # Parse + match against directory (case-insensitive)
         auto_selected = []
@@ -315,19 +318,25 @@ def _cliente_selector(clientes_lista: list) -> list:
 
         # ── Multiselect — default driven by paste result ─
         # Use session_state to persist selection across reruns
-        ss_key = "notif_clientes_sel"
+        # Use a separate store key so we can clear it after submit
+        # without touching the widget key mid-run
+        _store = "_notif_sel_store"
         if auto_selected:
-            # Merge pasted into existing selection without duplicates
-            existing = st.session_state.get(ss_key, [])
+            existing = st.session_state.get(_store, [])
             merged   = list(dict.fromkeys(existing + auto_selected))
-            st.session_state[ss_key] = merged
+            st.session_state[_store] = merged
 
         clientes_sel = st.multiselect(
             "Clientes seleccionados:",
             options=clientes_lista,
-            default=st.session_state.get(ss_key, []),
-            key=ss_key,
+            default=st.session_state.get(_store, []),
+            key="notif_clientes_sel",
+            on_change=lambda: st.session_state.update(
+                {"_notif_sel_store": st.session_state.get("notif_clientes_sel", [])}
+            ),
         )
+        # Keep store in sync when user manually changes multiselect
+        st.session_state[_store] = clientes_sel
 
     return clientes_sel
 
@@ -385,8 +394,8 @@ def render():
                     ):
                         st.success(f"✅ Notificación registrada para {len(clientes_sel)} cliente(s).")
                         # Clear client selection after successful submit
-                        st.session_state["notif_clientes_sel"] = []
-                        st.session_state["notif_paste"] = ""
+                        st.session_state["_notif_sel_store"] = []
+                        st.session_state["_notif_paste_store"] = ""
                         st.balloons()
 
     with col_info:
