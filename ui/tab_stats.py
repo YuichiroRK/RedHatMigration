@@ -392,7 +392,7 @@ def render():
     col_sel, col_btn1, col_btn2, col_btn3 = st.columns([1.5, 1, 1.2, 1.2])
     
     with col_sel:
-        n_weeks = st.selectbox("Cantidad de semanas:", [4, 8, 12, 16, 24], index=2, key="stats_nweeks")
+        n_weeks = st.selectbox("Cantidad de semanas a mostrar:", [4, 8, 12, 16, 24], index=2, key="stats_nweeks")
     
     with col_btn1:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -472,3 +472,23 @@ def render():
         st.plotly_chart(_chart_notif_sched(df), use_container_width=True, config=_PLOTLY_CFG)
     with ch2:
         st.plotly_chart(_chart_windows(df), use_container_width=True, config=_PLOTLY_CFG)
+'''
+DESCRIPCIÓN DE ESTADOS DE ESTADÍSTICAS
+Estadísticas cliente: 
+
+Total clientes: La totalidad de clientes acumulado según las fases que llevemos
+Notificados: Clientes que efectivamente ( sin rebote de correo) han recibido una comunicación de parte de Liberty
+En Revisión pasa ya Clientes sin contactar : Clientes que no han sido contactados ( Pestaña "Notificaciones Clientes" Estado "Correo Rebotado"
+Agendados: Ya cuentan con un registro de fecha inicial para realizar ventana. EN caso que el cliente tenga al menos una máquina en este estado, se mantendrá como Agendados. 
+Migrados OK: Clientes con  todas las máquinas migradas.
+Migrados Ok ( Acumulado): Sumatoria de Migrados OK semanal. 
+Estadísticas Máquinas
+
+Total máquinas: La totalidad de máquinas acumuladas según las fases que llevemos
+Sin agendar: Cantidad de máquinas que aún no cuentan con una fecha de ventada registrada
+Agendadas: Cantidad de máquinas que ya cuentan con un registro de fecha inicial para realizar ventana.
+Migradas Ok: Máquinas con migración  exitosa que ya pasaron los 10 días desde el momento del cierre de la migración.
+En seguimiento: Máquinas con migración exitosa, pero que aún están dentro de los 10 de estabilización. Fórmula: Fecha de cierre de la migración exitosa+10 días calendario.
+Fallido: Sumatoria de las máquinas que tuvieron Rollback tras seguimiento (dentro de los siguientes 10 días posteriores al cierre de la migración) + Rollback Inmediato ( Durante la migración como tal)
+
+'''

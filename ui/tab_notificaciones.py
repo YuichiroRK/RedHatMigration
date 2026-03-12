@@ -1,11 +1,7 @@
 """
 ui/tab_notificaciones.py
-Tab para registrar notificaciones masivas a clientes.
-Al final, un expander permite agendar una ventana de mantenimiento
-sin salir del tab.
 """
 import sqlite3
-
 import pandas as pd
 import streamlit as st
 
@@ -14,20 +10,33 @@ from logic.crud_operaciones import (
     guardar_ventana_mantenimiento,
     obtener_vms_disponibles,
 )
-from ui.components import (
-    DESC_AMBIENTES,
-    ambiente_desc,
-    chip_input,
-    section_card,
-)
+from ui.components import DESC_AMBIENTES, chip_input, section_card
 
-DIAS        = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
-SEMANAS     = ["1", "2", "3", "4"]
-COL_CLIENTE = "CUSTOMER_Name_SCCD-TM"
-COL_VM_ID   = "VM_ID_TM"
+DIAS      = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+SEMANAS   = ["1", "2", "3", "4"]
+COL_CLI   = "CUSTOMER_Name_SCCD-TM"
+COL_VM    = "VM_ID_TM"
+
+ESTADOS_POR_CANAL = {
+    "Email": [
+        "Correo Enviado",
+        "Correo Rebotado",
+        "Cliente por Contactar",
+        "Agenda Confirmada",
+        "Sin Respuesta",
+    ],
+    "Contacto Directo": [
+        "Cliente por Contactar",
+        "Agenda Confirmada",
+        "Sin Respuesta",
+    ],
+}
 
 
-def _clientes_directorio() -> list:
+# ──────────────────────────────────────────────────────────
+# DB helpers
+# ──────────────────────────────────────────────────────────
+def _clientes_directorio():
     conn = sqlite3.connect("migraciones.db")
     try:
         return pd.read_sql_query(
@@ -39,145 +48,155 @@ def _clientes_directorio() -> list:
         conn.close()
 
 
-def _clientes_pendientes() -> list:
+def _clientes_pendientes():
     conn = sqlite3.connect("migraciones.db")
     try:
         df = pd.read_sql_query(f"""
-            SELECT DISTINCT d."{COL_CLIENTE}"
-            FROM DATABASE d
-            WHERE NOT EXISTS (
-                SELECT 1 FROM VMs v WHERE v."{COL_VM_ID}" = d."{COL_VM_ID}"
-            )
-            ORDER BY d."{COL_CLIENTE}"
+            SELECT DISTINCT d."{COL_CLI}" FROM DATABASE d
+            WHERE NOT EXISTS (SELECT 1 FROM VMs v WHERE v."{COL_VM}"=d."{COL_VM}")
+            ORDER BY d."{COL_CLI}"
         """, conn)
-        return df[COL_CLIENTE].tolist() if not df.empty else []
+        return df[COL_CLI].tolist() if not df.empty else []
     except Exception:
         try:
             return pd.read_sql_query(
-                f'SELECT DISTINCT "{COL_CLIENTE}" FROM DATABASE ORDER BY "{COL_CLIENTE}"', conn
-            )[COL_CLIENTE].tolist()
+                f'SELECT DISTINCT "{COL_CLI}" FROM DATABASE ORDER BY "{COL_CLI}"', conn
+            )[COL_CLI].tolist()
         except Exception:
             return []
     finally:
         conn.close()
 
 
-# ─────────────────────────────────────────────────────────────
-# Ventana scheduling section (inside expander)
-# ─────────────────────────────────────────────────────────────
-def _form_ventana():
-    clientes = _clientes_pendientes()
-
-    with section_card("🏢 Cliente y VMs"):
-        cliente_sel = st.selectbox(
-            "Cliente:",
-            ["— Seleccione —"] + clientes,
-            key="nv_cliente",
-        )
-
-    if not cliente_sel or cliente_sel == "— Seleccione —":
-        return
-
-    df_vms = obtener_vms_disponibles(cliente_sel)
-    if df_vms.empty:
-        st.success("✅ Este cliente no tiene VMs pendientes de agendar.")
-        return
-
-    with section_card("🖥️ Máquinas Virtuales"):
-        vms_sel = st.multiselect(
-            "VMs a agendar:",
-            options=df_vms[COL_VM_ID].tolist(),
-            key="nv_vms",
-        )
-
-    if not vms_sel:
-        return
-
-    st.dataframe(
-        df_vms[df_vms[COL_VM_ID].isin(vms_sel)],
-        use_container_width=True, hide_index=True,
-    )
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ══════════════════════════════════════════════════════
-    # 1. HORARIO — primero
-    # ══════════════════════════════════════════════════════
-    with section_card("🕒 Configuración de Horario"):
-
-        # ── Criticidad aquí para condicionar el horario ──
+# ──────────────────────────────────────────────────────────
+# Client selector with paste
+# ──────────────────────────────────────────────────────────
+def _cliente_selector(clientes_lista):
+    with section_card("👥 Selección de Clientes"):
         st.markdown(
-            '<div style="font-size:.7rem;font-weight:800;letter-spacing:.08em;'
-            'text-transform:uppercase;color:#FF7800;margin-bottom:8px;">⚠️ Criticidad del cliente</div>',
+            '<div style="font-size:.74rem;color:#4A5568;margin-bottom:6px;">'
+            '📋 Pega clientes (uno por línea, coma o punto y coma) — '
+            'se identifican automáticamente al salir del campo.</div>',
             unsafe_allow_html=True,
         )
-        CRIT_DESC = {
-            "Crítico": ("🔴", "Cliente muy complejo de atender. Requiere coordinación especial, múltiples validaciones y acompañamiento técnico cercano."),
-            "Alta":    ("🟠", "Cliente con cierta complejidad. Puede requerir atención adicional pero es manejable con planificación."),
-            "Media":   ("🟡", "Cliente estándar. El proceso es sencillo y no presenta mayores complicaciones."),
-            "Baja":    ("🟢", "Cliente sin complicaciones. El proceso es directo y fluye sin fricciones."),
-        }
-        crit_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
-        for nivel, (icon, desc) in CRIT_DESC.items():
-            crit_html += (
-                f'<div style="flex:1;min-width:160px;background:#F9FAFB;border:1.5px solid #E2E6ED;'
-                f'border-radius:10px;padding:10px 12px;">'
-                f'<div style="font-size:.8rem;font-weight:800;margin-bottom:4px;">{icon} {nivel}</div>'
-                f'<div style="font-size:.72rem;color:#4A5568;line-height:1.4;">{desc}</div>'
-                f'</div>'
-            )
+        paste_raw = st.text_area(
+            "Pegar:", value=st.session_state.get("_notif_paste_store", ""),
+            key="notif_paste", height=80,
+            placeholder="Pega aquí o escribe los clientes…",
+            label_visibility="collapsed",
+        )
+        st.session_state["_notif_paste_store"] = paste_raw
+
+        # Auto-detect change → merge into selection + rerun
+        last = st.session_state.get("_notif_paste_last", "")
+        not_found = []
+        if paste_raw.strip() and paste_raw.strip() != last.strip():
+            tokens = list(dict.fromkeys(
+                t.strip() for t in
+                paste_raw.replace(",", "\n").replace(";", "\n").splitlines()
+                if t.strip()
+            ))
+            umap  = {c.upper(): c for c in clientes_lista if c and isinstance(c, str)}
+            found = []
+            for tok in tokens:
+                m = umap.get(tok.upper())
+                if m: found.append(m)
+                else: not_found.append(tok)
+            if found:
+                existing = st.session_state.get("_notif_sel_store", [])
+                st.session_state["_notif_sel_store"] = list(dict.fromkeys(existing + found))
+            st.session_state["_notif_paste_last"] = paste_raw
+            st.rerun()
+        elif paste_raw.strip():
+            tokens    = list(dict.fromkeys(t.strip() for t in paste_raw.replace(",","\n").replace(";","\n").splitlines() if t.strip()))
+            umap      = {c.upper(): c for c in clientes_lista if c and isinstance(c, str)}
+            not_found = [t for t in tokens if not umap.get(t.upper())]
+
+        if not_found:
+            st.warning("⚠️ No encontrados: " + ", ".join(f"**{n}**" for n in not_found))
+
+        # Streamlit ignores default= after first render.
+        # Writing to the widget key before rendering sets the value on every rerun.
+        # on_change keeps the store synced when user manually adds/removes.
+        st.session_state["notif_clientes_sel"] = st.session_state.get("_notif_sel_store", [])
+
+        sel = st.multiselect(
+            "Clientes seleccionados:", options=clientes_lista,
+            key="notif_clientes_sel",
+            on_change=lambda: st.session_state.update(
+                {"_notif_sel_store": st.session_state.get("notif_clientes_sel", [])}
+            ),
+        )
+        st.session_state["_notif_sel_store"] = sel
+        if sel:
+            st.caption(f"✅ {len(sel)} cliente(s) seleccionado(s).")
+    return sel
+
+
+# ──────────────────────────────────────────────────────────
+# Inline ventana fields  (returns dict or None)
+# ──────────────────────────────────────────────────────────
+def _ventana_fields(cliente: str):
+    """Renders ventana fields for a fixed client. Returns (vms_sel, datos) or (None, None)."""
+    df_vms = obtener_vms_disponibles(cliente)
+    if df_vms.empty:
+        st.success("✅ Este cliente no tiene VMs pendientes de agendar.")
+        return None, None
+
+    with section_card("🖥️ Máquinas Virtuales"):
+        vms_sel = st.multiselect("VMs a agendar:", df_vms[COL_VM].tolist(), key="nv_vms")
+
+    if not vms_sel:
+        st.caption("Selecciona al menos una VM para continuar.")
+        return None, None
+
+    st.dataframe(df_vms[df_vms[COL_VM].isin(vms_sel)], use_container_width=True, hide_index=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Criticidad ───────────────────────────────────────
+    CRIT_DESC = {
+        "Crítico": ("🔴", "Requiere coordinación especial."),
+        "Alta":    ("🟠", "Cierta complejidad, manejable."),
+        "Media":   ("🟡", "Proceso estándar."),
+        "Baja":    ("🟢", "Sin complicaciones."),
+    }
+    with section_card("🕒 Configuración de Horario"):
+        crit_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
+        for nv, (ic, dc) in CRIT_DESC.items():
+            crit_html += (f'<div style="flex:1;min-width:140px;background:#F9FAFB;border:1.5px solid #E2E6ED;'
+                          f'border-radius:10px;padding:9px 11px;">'
+                          f'<div style="font-size:.8rem;font-weight:800;">{ic} {nv}</div>'
+                          f'<div style="font-size:.7rem;color:#4A5568;line-height:1.4;">{dc}</div></div>')
         crit_html += '</div>'
         st.markdown(crit_html, unsafe_allow_html=True)
 
-        criticidad = st.selectbox(
-            "Criticidad del cliente:",
-            list(CRIT_DESC.keys()),
-            key="nv_criticidad",
-            label_visibility="collapsed",
-        )
+        criticidad  = st.selectbox("Criticidad:", list(CRIT_DESC.keys()), key="nv_criticidad", label_visibility="collapsed")
         motivo_crit = st.text_input("Razón de la criticidad:", key="nv_motivo")
-
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Si Crítico o Alta → advertencia + opción de agendar igual ──
-        es_complejo = criticidad in ("Crítico", "Alta")
+        es_complejo   = criticidad in ("Crítico", "Alta")
         forzar_agenda = False
+        tipo_ventana  = "Complejo"
+        start_val = end_val = sem_val = dia_val = turn_val = None
+
         if es_complejo:
-            st.warning(
-                "⚡ Clientes **Crítico** o **Alta** normalmente no requieren agendar una ventana. "
-                "Se registrarán como tipo **Complejo** — pero puedes agendar igual si ya tienes fecha confirmada."
-            )
-            forzar_agenda = st.checkbox(
-                "📅 Tengo una fecha confirmada, quiero agendar de todas formas",
-                key="nv_forzar_agenda",
-            )
-            if not forzar_agenda:
-                tipo_ventana = "Complejo"
-                start_val = end_val = sem_val = dia_val = turn_val = None
+            st.warning("⚡ Clientes **Crítico** o **Alta** se registran como tipo **Complejo** por defecto.")
+            forzar_agenda = st.checkbox("📅 Tengo fecha confirmada, quiero agendar de todas formas", key="nv_forzar")
 
         if not es_complejo or forzar_agenda:
-            # ── Tipo de ventana: Rango primero, luego Específico ──
-            tipo_ventana = st.radio(
-                "Tipo de Ventana:",
-                ["Rango de Horario", "Horario Específico / Semi-específico"],
-                horizontal=True, key="nv_tipo_ventana",
-            )
+            tipo_ventana = st.radio("Tipo de Ventana:", ["Rango de Horario", "Horario Específico / Semi-específico"],
+                                    horizontal=True, key="nv_tipo")
             st.markdown("<br>", unsafe_allow_html=True)
-
-            start_val = end_val = sem_val = dia_val = turn_val = None
 
             if tipo_ventana == "Rango de Horario":
                 c1, c2, c3 = st.columns(3, gap="large")
                 with c1: sem_val  = st.multiselect("Semanas:", SEMANAS, key="nv_sem")
                 with c2: dia_val  = st.multiselect("Días:",    DIAS,    key="nv_dia")
-                with c3: turn_val = st.selectbox("Turno:", ["Mañana (6AM a 2PM)","Tarde (2PM a 10PM)","Noche (10PM a 6AM)"], key="nv_turno")
-
+                with c3: turn_val = st.selectbox("Turno:", ["Mañana (6AM a 2PM)", "Tarde (2PM a 10PM)", "Noche (10PM a 6AM)"], key="nv_turno")
             else:
-                # Toggle: fecha específica vs horas con semanas
-                modo = st.toggle("📅 Usar fechas exactas (desactivado = solo horas + semanas)", key="nv_modo_esp", value=True)
+                modo = st.toggle("📅 Usar fechas exactas", key="nv_modo", value=True)
                 st.markdown("<br>", unsafe_allow_html=True)
-
                 if modo:
-                    # Horario Específico
                     tipo_ventana = "Horario Específico"
                     c1, c2 = st.columns(2, gap="large")
                     with c1:
@@ -188,232 +207,175 @@ def _form_ventana():
                         t_f = st.time_input("🕐 Hora Fin",     key="nv_tf")
                     start_val, end_val = f"{d_i} {t_i}", f"{d_f} {t_f}"
                 else:
-                    # Horario Semi-específico
                     tipo_ventana = "Horario Semi-específico"
                     c1, c2, c3 = st.columns(3, gap="large")
                     with c1: sem_val = st.multiselect("Semanas:", SEMANAS, key="nv_sem2")
                     with c2: dia_val = st.multiselect("Días:",    DIAS,    key="nv_dia2")
                     with c3:
-                        t_i_s = st.time_input("🕐 Hora Inicio", key="nv_tis")
-                        t_f_s = st.time_input("🕐 Hora Fin",    key="nv_tfs")
-                    start_val, end_val = str(t_i_s), str(t_f_s)
+                        t_is = st.time_input("🕐 Hora Inicio", key="nv_tis")
+                        t_fs = st.time_input("🕐 Hora Fin",    key="nv_tfs")
+                    start_val, end_val = str(t_is), str(t_fs)
 
-    # ══════════════════════════════════════════════════════
-    # 2. DETALLES TÉCNICOS + INFO GENERAL — después del horario
-    # ══════════════════════════════════════════════════════
     col_a, col_b = st.columns(2, gap="large")
-
     with col_a:
         with section_card("📝 Detalles Técnicos"):
             apps_lista  = chip_input("Aplicaciones y Servicios:", "nv_apps_chips")
             st.markdown("<br>", unsafe_allow_html=True)
-            comentarios = st.text_area("Comentarios Finales:", key="nv_comentarios", height=110)
-
+            comentarios = st.text_area("Comentarios Finales:", key="nv_comentarios", height=100)
     with col_b:
         with section_card("📋 Información General"):
-            en_uso = st.selectbox(
-                "¿La(s) VM(s) están actualmente en Uso?", ["Si", "No"], key="nv_en_uso"
-            )
-
-            # ── Ambiente: mostrar las 3 descripciones primero ──
-            st.markdown(
-                '<div style="font-size:.72rem;font-weight:700;color:#4A5568;margin-bottom:6px;">'
-                'Descripción de ambientes:</div>',
-                unsafe_allow_html=True,
-            )
-            amb_preview = ""
-            for amb_key, (titulo, desc, _) in DESC_AMBIENTES.items():
-                COLOR = {"PROD": "#FFF5F5", "DEV": "#F0FFF4", "QA": "#FEFCBF"}
+            en_uso = st.selectbox("¿VM(s) en uso actualmente?", ["Si", "No"], key="nv_en_uso")
+            amb_html = ""
+            for ak, (titulo, desc, _) in DESC_AMBIENTES.items():
+                COLOR  = {"PROD": "#FFF5F5", "DEV": "#F0FFF4", "QA": "#FEFCBF"}
                 BORDER = {"PROD": "#FC8181", "DEV": "#68D391", "QA": "#F6E05E"}
-                bg  = COLOR.get(amb_key, "#F9FAFB")
-                brd = BORDER.get(amb_key, "#CBD5E0")
-                amb_preview += (
-                    f'<div style="background:{bg};border:1.5px solid {brd};'
-                    f'border-radius:8px;padding:6px 10px;margin-bottom:5px;">'
-                    f'<span style="font-size:.75rem;font-weight:800;">{titulo}</span> '
-                    f'<span style="font-size:.7rem;color:#4A5568;">— {desc}</span>'
-                    f'</div>'
-                )
-            st.markdown(amb_preview, unsafe_allow_html=True)
+                bg = COLOR.get(ak,"#F9FAFB"); br = BORDER.get(ak,"#CBD5E0")
+                amb_html += (f'<div style="background:{bg};border:1.5px solid {br};border-radius:8px;'
+                             f'padding:6px 10px;margin-bottom:5px;">'
+                             f'<span style="font-size:.75rem;font-weight:800;">{titulo}</span> '
+                             f'<span style="font-size:.7rem;color:#4A5568;">— {desc}</span></div>')
+            st.markdown(amb_html, unsafe_allow_html=True)
+            ambiente = st.selectbox("Ambiente:", list(DESC_AMBIENTES.keys()), key="nv_ambiente")
 
-            ambiente = st.selectbox(
-                "Ambiente:", list(DESC_AMBIENTES.keys()), key="nv_ambiente"
-            )
-
-    # ── Botón guardar ─────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_btn, _ = st.columns([2, 5])
-    with col_btn:
-        if st.button("✅ Guardar Ventana", key="nv_btn_guardar", use_container_width=True):
-            datos = {
-                "en_uso":            en_uso,
-                "ambiente":          ambiente,
-                "descripcion":       DESC_AMBIENTES[ambiente][1],
-                "apps":              ", ".join(apps_lista),
-                "tipo_ventana":      tipo_ventana,
-                "StartDateTime":     start_val,
-                "EndDateTime":       end_val,
-                "turno_rango":       turn_val,
-                "semanas_rango":     ",".join(sem_val) if sem_val else None,
-                "Días_Rango":        ",".join(dia_val) if dia_val else None,
-                "criticidad":        criticidad,
-                "motivo_criticidad": motivo_crit,
-                "comentarios":       comentarios,
-            }
-            if guardar_ventana_mantenimiento(cliente_sel, vms_sel, datos):
-                st.success(f"✅ {len(vms_sel)} VM(s) agendadas correctamente.")
-                st.session_state["nv_apps_chips"] = []
-                st.balloons()
-                st.rerun()
-            else:
-                st.error("❌ Error al guardar. Revisa los datos e intenta de nuevo.")
+    datos = {
+        "en_uso": en_uso, "ambiente": ambiente,
+        "descripcion": DESC_AMBIENTES[ambiente][1],
+        "apps": ", ".join(apps_lista), "tipo_ventana": tipo_ventana,
+        "StartDateTime": start_val, "EndDateTime": end_val,
+        "turno_rango": turn_val,
+        "semanas_rango": ",".join(sem_val) if sem_val else None,
+        "Días_Rango": ",".join(dia_val) if dia_val else None,
+        "criticidad": criticidad, "motivo_criticidad": motivo_crit,
+        "comentarios": comentarios,
+    }
+    return vms_sel, datos
 
 
-# ─────────────────────────────────────────────────────────────
-# Client selector (outside form — supports paste)
-# ─────────────────────────────────────────────────────────────
-def _cliente_selector(clientes_lista: list) -> list:
-    """
-    Paste + multiselect OUTSIDE the form so dynamic defaults work correctly.
-    Returns the final list of selected clients.
-    """
-    with section_card("👥 Selección de Clientes"):
-        # ── Paste area ───────────────────────────────────
-        paste_raw = st.text_area(
-            "📋 Pegar clientes (Ctrl+V — uno por línea o separados por coma):",
-            value=st.session_state.get("_notif_paste_store", ""),
-            key="notif_paste",
-            height=75,
-            placeholder="Pega aquí la lista de clientes…",
-        )
-        # Keep store in sync
-        st.session_state["_notif_paste_store"] = paste_raw
-
-        # Parse + match against directory (case-insensitive)
-        auto_selected = []
-        not_found     = []
-        if paste_raw.strip():
-            tokens = list(dict.fromkeys(
-                t.strip()
-                for t in paste_raw.replace(",", "\n").splitlines()
-                if t.strip()
-            ))
-            upper_map = {c.upper(): c for c in clientes_lista if c and isinstance(c, str)}
-            for tok in tokens:
-                match = upper_map.get(tok.upper())
-                if match:
-                    auto_selected.append(match)
-                else:
-                    not_found.append(tok)
-
-            if not_found:
-                st.warning(
-                    "⚠️ No encontrados en el directorio: " +
-                    ", ".join(f"**{n}**" for n in not_found)
-                )
-            if auto_selected:
-                st.success(
-                    f"✅ {len(auto_selected)} cliente(s) identificados automáticamente."
-                )
-
-        # ── Multiselect — default driven by paste result ─
-        # Use session_state to persist selection across reruns
-        # Use a separate store key so we can clear it after submit
-        # without touching the widget key mid-run
-        _store = "_notif_sel_store"
-        if auto_selected:
-            existing = st.session_state.get(_store, [])
-            merged   = list(dict.fromkeys(existing + auto_selected))
-            st.session_state[_store] = merged
-
-        clientes_sel = st.multiselect(
-            "Clientes seleccionados:",
-            options=clientes_lista,
-            default=st.session_state.get(_store, []),
-            key="notif_clientes_sel",
-            on_change=lambda: st.session_state.update(
-                {"_notif_sel_store": st.session_state.get("notif_clientes_sel", [])}
-            ),
-        )
-        # Keep store in sync when user manually changes multiselect
-        st.session_state[_store] = clientes_sel
-
-    return clientes_sel
-
-
-# ─────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 # Main render
-# ─────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 def render():
     st.markdown("## 📢 Registro de Notificaciones a Clientes")
 
     clientes_lista = _clientes_directorio()
+    clientes_sel   = _cliente_selector(clientes_lista)
 
-    # ── Client selector lives OUTSIDE the form ───────────
-    clientes_sel = _cliente_selector(clientes_lista)
-
-    col_form, col_info = st.columns([1.5, 1])
-
-    with col_form:
-        with st.form("form_notificaciones", clear_on_submit=True):
-            st.markdown("### ✉️ Detalles del Envío")
-
-            # Show selected clients as read-only summary inside the form
-            if clientes_sel:
-                st.markdown(
-                    f'<div style="background:#F0FFF4;border:1px solid #9AE6B4;'
-                    f'border-radius:8px;padding:8px 14px;margin-bottom:10px;'
-                    f'font-size:.8rem;color:#22543D;font-weight:600;">'
-                    f'✅ {len(clientes_sel)} cliente(s) seleccionado(s): '
-                    + ", ".join(clientes_sel[:5])
-                    + (f" … y {len(clientes_sel)-5} más" if len(clientes_sel) > 5 else "")
-                    + "</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.info("ℹ️ Selecciona clientes arriba antes de registrar.")
-
-            c1, c2 = st.columns(2)
-            with c1:
-                creado_por = st.text_input("Ingeniero / Registrado por:")
-                canal      = st.selectbox("Canal:", ["Email","Teléfono","Reunión Teams","WhatsApp","Otro"])
-            with c2:
-                estado   = st.selectbox("Estado:", ["Enviado","Recibido","Sin Respuesta","Rebotado","Cliente por Contactar"])
-
-            notas  = st.text_area("Notas / Asunto / Observaciones:")
-            submit = st.form_submit_button("🚀 Registrar Notificaciones")
-
-            if submit:
-                if not clientes_sel:
-                    st.error("Selecciona al menos un cliente en la sección de arriba.")
-                elif not creado_por.strip():
-                    st.error("Indica quién registra la notificación.")
-                else:
-                    if guardar_notificaciones_masivas(
-                        clientes_sel, creado_por.strip(), estado, canal, "1", notas.strip()
-                    ):
-                        st.success(f"✅ Notificación registrada para {len(clientes_sel)} cliente(s).")
-                        # Clear client selection after successful submit
-                        st.session_state["_notif_sel_store"] = []
-                        st.session_state["_notif_paste_store"] = ""
-                        st.balloons()
-
-    with col_info:
-        st.info(
-            "**💡 Tip de uso masivo:**\n\n"
-            "Pega la lista de clientes con Ctrl+V (uno por línea o separados "
-            "por coma) y se seleccionarán automáticamente.\n\n"
-            "El sistema crea una fila individual por cada cliente en "
-            "`NOTIFICACIONES_CLIENTES`."
-        )
-
-    # ── Expander: agendar ventana desde esta misma tab ────
     st.markdown("---")
-    with st.expander("🗓️ ¿Concretaste una ventana con algún cliente? Agrégala aquí", expanded=False):
+    st.markdown("### 📋 Registro de la Notificación")
+
+    if clientes_sel:
         st.markdown(
-            '<div style="font-size:.8rem;color:#7B4A1E;font-weight:500;'
-            'margin-bottom:14px;">Completa los campos para registrar la ventana '
-            'de mantenimiento sin salir de esta pantalla.</div>',
-            unsafe_allow_html=True,
+            f'<div style="background:#F0FFF4;border:1px solid #9AE6B4;border-radius:8px;'
+            f'padding:8px 14px;margin-bottom:12px;font-size:.8rem;color:#22543D;font-weight:600;">'
+            f'✅ {len(clientes_sel)} cliente(s): '
+            + ", ".join(clientes_sel[:5])
+            + (f" … y {len(clientes_sel)-5} más" if len(clientes_sel) > 5 else "")
+            + "</div>", unsafe_allow_html=True)
+    else:
+        st.info("ℹ️ Selecciona clientes arriba antes de registrar.")
+
+    col_campos, col_ayuda = st.columns([1.5, 1])
+
+    with col_campos:
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            creado_por = st.text_input("👤 Ingeniero / Registrado por:", key="notif_creado_por")
+
+            # Canal — cambiar resetea el estado seleccionado
+            prev_canal = st.session_state.get("_notif_canal_prev", "Email")
+            canal = st.selectbox(
+                "📡 Canal:",
+                list(ESTADOS_POR_CANAL.keys()),
+                key="notif_canal",
+            )
+            # Si canal cambió, resetear estado guardado
+            if canal != prev_canal:
+                st.session_state["_notif_canal_prev"] = canal
+                # Always land on "Sin Respuesta" when switching canal
+                opciones_nuevo = ESTADOS_POR_CANAL.get(canal, [])
+                sin_resp_idx = opciones_nuevo.index("Sin Respuesta") if "Sin Respuesta" in opciones_nuevo else 0
+                st.session_state["_notif_estado_idx"] = sin_resp_idx
+                st.rerun()
+
+        with cc2:
+            st.markdown('<div style="font-size:.72rem;font-weight:700;color:#4A5568;margin-top:4px;margin-bottom:4px;">📌 Estado de Notificación:</div>', unsafe_allow_html=True)
+            opciones_estado = ESTADOS_POR_CANAL[canal]
+            estado = st.selectbox(
+                "Estado:", opciones_estado,
+                index=min(st.session_state.get("_notif_estado_idx", 0), len(opciones_estado)-1),
+                key="notif_estado",
+                label_visibility="collapsed",
+                on_change=lambda: st.session_state.update(
+                    {"_notif_estado_idx": opciones_estado.index(st.session_state.get("notif_estado", opciones_estado[0]))
+                     if st.session_state.get("notif_estado") in opciones_estado else 0}
+                ),
+            )
+
+        notas = st.text_area("📝 Notas / Asunto / Observaciones:", key="notif_notas", height=90)
+
+    with col_ayuda:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.info(
+            "**📨 Email:** Correo Enviado · Correo Rebotado · "
+            "Cliente por Contactar · Agenda Confirmada · Sin Respuesta\n\n"
+            "**📞 Contacto Directo:** Cliente por Contactar · "
+            "Agenda Confirmada · Sin Respuesta"
         )
-        _form_ventana()
+
+    # ── Agenda Confirmada: mostrar ventana inline ─────────
+    is_agenda = estado == "Agenda Confirmada"
+    vms_sel_ventana = None
+    datos_ventana   = None
+
+    if is_agenda:
+        if len(clientes_sel) != 1:
+            st.warning("⚠️ **Agenda Confirmada** requiere seleccionar **exactamente un cliente**.")
+        else:
+            st.markdown("---")
+            st.markdown(
+                f'<div style="background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;'
+                f'padding:12px 16px;margin-bottom:14px;font-size:.85rem;color:#2B6CB0;font-weight:600;">'
+                f'🗓️ Ventana confirmada con <strong>{clientes_sel[0]}</strong> — '
+                f'Completa los campos para registrarla junto con la notificación.</div>',
+                unsafe_allow_html=True)
+            vms_sel_ventana, datos_ventana = _ventana_fields(clientes_sel[0])
+
+    # ── Botón único de registro ───────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    btn_label = "🚀 Registrar Notificación y Ventana" if (is_agenda and datos_ventana) else "🚀 Registrar Notificación"
+    btn_disabled = is_agenda and len(clientes_sel) != 1
+
+    if not btn_disabled:
+        if st.button(btn_label, key="notif_submit", type="primary", use_container_width=True):
+            # Validations
+            if not clientes_sel:
+                st.error("Selecciona al menos un cliente.")
+            elif not creado_por.strip():
+                st.error("Indica quién registra la notificación.")
+            elif is_agenda and (not vms_sel_ventana or datos_ventana is None):
+                st.error("Selecciona al menos una VM para registrar la ventana.")
+            else:
+                ok_notif = guardar_notificaciones_masivas(
+                    clientes_sel, creado_por.strip(), estado, canal, "1", notas.strip()
+                )
+                ok_ventana = True
+                if is_agenda and vms_sel_ventana and datos_ventana:
+                    ok_ventana = guardar_ventana_mantenimiento(clientes_sel[0], vms_sel_ventana, datos_ventana)
+
+                if ok_notif and ok_ventana:
+                    msg = f"✅ Notificación registrada para {len(clientes_sel)} cliente(s)."
+                    if is_agenda:
+                        msg += f" + Ventana guardada para {len(vms_sel_ventana)} VM(s)."
+                    st.success(msg)
+                    # Clear state
+                    for k in ["_notif_sel_store", "_notif_paste_store", "_notif_paste_last",
+                              "_notif_canal_prev", "_notif_estado_idx"]:
+                        st.session_state.pop(k, None)
+                    st.session_state.get("nv_apps_chips", None) and st.session_state.update({"nv_apps_chips": []})
+                    st.balloons()
+                    st.rerun()
+                elif not ok_notif:
+                    st.error("❌ Error al guardar la notificación.")
+                elif not ok_ventana:
+                    st.error("❌ Notificación guardada pero error en la ventana.")

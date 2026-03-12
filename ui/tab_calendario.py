@@ -2,6 +2,7 @@
 ui/tab_calendario.py — Calendario de ventanas de mantenimiento.
 """
 
+import io
 import sqlite3
 from datetime import date, timedelta
 
@@ -328,7 +329,9 @@ def _day_section(day_evs: list, sel: date, key_prefix: str, show_table: bool = T
         return
 
     if show_table:
-        st.dataframe(events_to_df(day_evs), use_container_width=True, hide_index=True)
+        _df_day = events_to_df(day_evs)
+        st.dataframe(_df_day, use_container_width=True, hide_index=True)
+        _download_row(_df_day, "Ventanas del día", f"cal_dia_{key_prefix}")
 
     st.markdown(
         '<div style="font-size:.77rem;font-weight:700;color:#4A5568;margin:12px 0 6px;">'
@@ -425,6 +428,37 @@ def _pending_vms_section(cliente: str):
                 if st.button(vid, key=f"pv_{vid}", use_container_width=True):
                     st.session_state["cal_vm"] = vid
                     st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
+# Download helper
+# ─────────────────────────────────────────────────────────────
+def _download_row(df: pd.DataFrame, label: str, key: str):
+    """Renders CSV + Excel download buttons for a DataFrame."""
+    if df.empty:
+        return
+    dc1, dc2, _ = st.columns([1, 1, 4])
+    with dc1:
+        csv = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            f"📥 CSV — {label}", data=csv,
+            file_name=f"{key}.csv", mime="text/csv",
+            key=f"dl_csv_{key}", use_container_width=True,
+        )
+    with dc2:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df.to_excel(w, index=False, sheet_name=label[:31])
+            ws = w.sheets[label[:31]]
+            for col in ws.columns:
+                ws.column_dimensions[col[0].column_letter].width = min(
+                    max(len(str(c.value or '')) for c in col) + 4, 40)
+        st.download_button(
+            f"📥 Excel — {label}", data=buf.getvalue(),
+            file_name=f"{key}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_xl_{key}", use_container_width=True,
+        )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -612,6 +646,8 @@ def render():
                 if est_f: df_rng = df_rng[df_rng["Estado"].isin(est_f)]
                 if cli_f: df_rng = df_rng[df_rng["Cliente"].isin(cli_f)]
                 st.dataframe(df_rng, use_container_width=True, hide_index=True)
+                rng_label = "Semana" if tab_rng == "📅 Semana" else "Mes"
+                _download_row(df_rng, f"Ventanas {rng_label}", f"cal_tabla_{rng_label.lower()}")
             else:
                 st.info("Sin ventanas en este período.")
 
