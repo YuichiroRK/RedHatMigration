@@ -20,11 +20,11 @@ from ui.status_widget import render_status_editor
 from ui.vm_editor import render_vm_editor, render_vm_selector_and_editor
 
 ESTADO_ICON = {
-    "Agendado":"🔵","Éxito":"✅","Sin Agendar":"⏳",
-    "RollBack":"↩️","Fallida":"❌","En Seguimiento":"🔍",
+    "Agendado":"🔵","Migrada OK":"✅","Sin Agendar":"⏳",
+    "Rollback Tras Seguimiento":"↩️","Rollback Inmediato":"❌","En Seguimiento":"🔍",
 }
 TURNO_DESC  = {"Mañana":"06:00–14:00","Tarde":"14:00–22:00","Noche":"22:00–06:00 (+1d)"}
-AMB_COLORS  = {"PRODUCCION (PROD)":"#E53E3E","DESARROLLO (DEV)":"#38A169","CALIDAD (QA)":"#D69E2E"}
+AMB_COLORS  = {"PROD":"#E53E3E","DEV":"#38A169","QA":"#D69E2E"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ def _vm_detail(vm_id: str):
     with col1:
         st.markdown(card("📋 Información General",
             irow("Ambiente",    amb, AMB_COLORS.get(amb))
-            + irow("Complejidad",  gv("criticidad"))
+            + irow("Criticidad",  gv("criticidad"))
             + irow("Motivo",      gv("motivo_criticidad"))
             + irow("En Uso",      gv("en_uso"))
         ), unsafe_allow_html=True)
@@ -308,9 +308,16 @@ def _vm_detail(vm_id: str):
         "✏️ Editar Agendamiento (VMs)",
     ])
     with t_estado:
-        st.caption("Modifica el estado de migración, fechas y observaciones. "
-                   "Escribe en la tabla **ESTADO_VMS** — no toca el agendamiento.")
-        render_status_editor(vm_id, gv('cliente'), estado, key_suffix="cal")
+        st.caption(
+            "Transiciones permitidas desde el calendario: "
+            "**Agendado → En Seguimiento** (ventana ejecutada) · "
+            "**Agendado → Rollback Inmediato** (fallo durante migración)."
+        )
+        render_status_editor(
+            vm_id, gv('cliente'), estado,
+            key_suffix="cal",
+            allowed_states=["En Seguimiento", "Rollback Inmediato"],
+        )
     with t_agend:
         st.caption("Modifica los datos de agendamiento: VM ID, cliente, horario, etc. "
                    "Escribe en la tabla **VMs** — no toca el estado de migración.")

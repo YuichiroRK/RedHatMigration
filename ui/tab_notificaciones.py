@@ -135,9 +135,6 @@ def _cliente_selector(clientes_lista):
         if not_found:
             st.warning("⚠️ No encontrados: " + ", ".join(f"**{n}**" for n in not_found))
 
-        # Streamlit ignores default= after first render.
-        # Writing to the widget key before rendering sets the value on every rerun.
-        # on_change keeps the store synced when user manually adds/removes.
         _clean_store = [c for c in st.session_state.get("_notif_sel_store", []) if c is not None]
         st.session_state["_notif_sel_store"] = _clean_store
         st.session_state["notif_clientes_sel"] = _clean_store
@@ -200,71 +197,99 @@ def _ventana_fields(cliente: str):
         motivo_crit = st.text_input("Razón / observación:", key="nv_motivo")
         st.markdown("<br>", unsafe_allow_html=True)
 
-        tipo_ventana = st.radio("Tipo de Ventana:", ["Rango de Horario", "Horario Específico", "Horario Semi-específico"],
-                                horizontal=True, key="nv_tipo")
-        st.markdown("<br>", unsafe_allow_html=True)
-
+        # Variables globales para los datos a guardar
         start_val = end_val = sem_val = dia_val = turn_val = None
         _errors = []
+        tipo_ventana = None
+        mostrar_opciones_horario = True
 
-        if tipo_ventana == "Rango de Horario":
-            c1, c2, c3 = st.columns(3, gap="large")
-            with c1: sem_val  = st.multiselect("Semanas:", SEMANAS, key="nv_sem")
-            with c2: dia_val  = st.multiselect("Días:",    DIAS,    key="nv_dia")
-            with c3: turn_val = st.selectbox("Turno:", ["Mañana (6AM a 2PM)", "Tarde (2PM a 10PM)", "Noche (10PM a 6AM)"], key="nv_turno")
-            if not sem_val: _errors.append("Selecciona al menos una semana.")
-            if not dia_val: _errors.append("Selecciona al menos un día.")
+        if criticidad == "Alta":
+            st.info("ℹ️ Al indicar **Complejidad Alta**, el cliente se registrará como **Complejo** en el directorio. No es obligatorio agendar una ventana de mantenimiento.")
+            mostrar_opciones_horario = st.toggle("Habilitar configuración de horario manual", value=False, key="nv_toggle_horario")
+            if not mostrar_opciones_horario:
+                tipo_ventana = "Cliente Complejo (Sin ventana)"
 
-        elif tipo_ventana == "Horario Específico":
-            import datetime as _dtv
-            c1, c2 = st.columns(2, gap="large")
-            with c1:
-                st.markdown('<div style="background:#F0FFF4;border:1.5px solid #9AE6B4;border-radius:10px;padding:10px 12px;margin-bottom:4px;"><div style="font-size:.68rem;font-weight:800;color:#276749;margin-bottom:6px;">📅 Inicio de Ventana</div>', unsafe_allow_html=True)
-                d_i = st.date_input("Fecha Inicio", key="nv_di", label_visibility="collapsed")
-                t_i = st.time_input("Hora Inicio",  key="nv_ti", label_visibility="collapsed")
-                st.markdown("</div>", unsafe_allow_html=True)
-            with c2:
-                st.markdown('<div style="background:#FFF5F5;border:1.5px solid #FC8181;border-radius:10px;padding:10px 12px;margin-bottom:4px;"><div style="font-size:.68rem;font-weight:800;color:#9B2C2C;margin-bottom:6px;">🏁 Fin de Ventana</div>', unsafe_allow_html=True)
-                d_f = st.date_input("Fecha Fin",    key="nv_df", label_visibility="collapsed")
-                t_f = st.time_input("Hora Fin",     key="nv_tf", label_visibility="collapsed")
-                st.markdown("</div>", unsafe_allow_html=True)
-            start_val = f"{d_i} {t_i}"
-            end_val   = f"{d_f} {t_f}"
-            # Validation: end must be after start
-            try:
-                dt_s = _dtv.datetime.combine(d_i, t_i)
-                dt_e = _dtv.datetime.combine(d_f, t_f)
-                if dt_e <= dt_s:
-                    _errors.append("⚠️ La fecha/hora de fin debe ser posterior al inicio.")
+        if mostrar_opciones_horario:
+            st.markdown('<div style="font-size:.75rem;font-weight:600;color:#4A5568;margin-bottom:8px;">Selecciona la modalidad de ventana:</div>', unsafe_allow_html=True)
+            
+            # Selector horizontal que simula pestañas pero retorna el valor automáticamente
+            tipo_ventana_sel = st.radio(
+                "Modalidad de ventana:", 
+                ["📅 Rango de Horario", "🎯 Horario Específico"], 
+                horizontal=True, 
+                label_visibility="collapsed",
+                key="nv_tipo_radio"
+            )
+            
+            st.markdown("<hr style='margin:10px 0 20px 0;'>", unsafe_allow_html=True)
+
+            if tipo_ventana_sel == "📅 Rango de Horario":
+                tipo_ventana = "Rango de Horario"
+                c1, c2, c3 = st.columns(3, gap="large")
+                with c1: sem_val  = st.multiselect("Semanas:", SEMANAS, key="nv_sem_rng")
+                with c2: dia_val  = st.multiselect("Días:",    DIAS,    key="nv_dia_rng")
+                with c3: turn_val = st.selectbox("Turno:", ["Mañana (6AM a 2PM)", "Tarde (2PM a 10PM)", "Noche (10PM a 6AM)"], key="nv_turno_rng")
+                
+                if not sem_val: _errors.append("Selecciona al menos una semana.")
+                if not dia_val: _errors.append("Selecciona al menos un día.")
+
+            elif tipo_ventana_sel == "🎯 Horario Específico":
+                tipo_ventana = "Horario Específico"
+                es_fecha_exacta = st.toggle("🎯 Usar Fecha y Hora Exacta", value=False, key="nv_toggle_precision",
+                                            help="Desactívalo para usar una hora fija dentro de un rango de días/semanas")
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                import datetime as _dtv
+                if es_fecha_exacta:
+                    c1, c2 = st.columns(2, gap="large")
+                    with c1:
+                        st.markdown('<div style="background:#F0FFF4;border:1.5px solid #9AE6B4;border-radius:10px;padding:10px 12px;margin-bottom:4px;"><div style="font-size:.68rem;font-weight:800;color:#276749;margin-bottom:6px;">📅 Inicio de Ventana</div>', unsafe_allow_html=True)
+                        d_i = st.date_input("Fecha Inicio", key="nv_di_esp", label_visibility="collapsed")
+                        t_i = st.time_input("Hora Inicio",  key="nv_ti_esp", label_visibility="collapsed")
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    with c2:
+                        st.markdown('<div style="background:#FFF5F5;border:1.5px solid #FC8181;border-radius:10px;padding:10px 12px;margin-bottom:4px;"><div style="font-size:.68rem;font-weight:800;color:#9B2C2C;margin-bottom:6px;">🏁 Fin de Ventana</div>', unsafe_allow_html=True)
+                        d_f = st.date_input("Fecha Fin",    key="nv_df_esp", label_visibility="collapsed")
+                        t_f = st.time_input("Hora Fin",     key="nv_tf_esp", label_visibility="collapsed")
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        
+                    start_val = f"{d_i} {t_i}"
+                    end_val   = f"{d_f} {t_f}"
+                    
+                    try:
+                        dt_s = _dtv.datetime.combine(d_i, t_i)
+                        dt_e = _dtv.datetime.combine(d_f, t_f)
+                        if dt_e <= dt_s:
+                            _errors.append("⚠️ La fecha/hora de fin debe ser posterior al inicio.")
+                        else:
+                            dur = dt_e - dt_s
+                            h, m = divmod(int(dur.total_seconds()), 3600)
+                            st.markdown(
+                                f'<div style="background:#EBF8FF;border:1px solid #90CDF4;border-radius:8px;'
+                                f'padding:8px 14px;font-size:.78rem;color:#2B6CB0;font-weight:600;margin-top:6px;">'
+                                f'⏱ {h}h {m//60}min &nbsp;·&nbsp; '
+                                f'{d_i.strftime("%d/%m/%Y")} {t_i.strftime("%H:%M")} → '
+                                f'{d_f.strftime("%d/%m/%Y")} {t_f.strftime("%H:%M")}</div>',
+                                unsafe_allow_html=True)
+                    except Exception:
+                        pass
                 else:
-                    dur = dt_e - dt_s
-                    h, m = divmod(int(dur.total_seconds()), 3600)
-                    st.markdown(
-                        f'<div style="background:#EBF8FF;border:1px solid #90CDF4;border-radius:8px;'
-                        f'padding:8px 14px;font-size:.78rem;color:#2B6CB0;font-weight:600;margin-top:6px;">'
-                        f'⏱ {h}h {m//60}min &nbsp;·&nbsp; '
-                        f'{d_i.strftime("%d/%m/%Y")} {t_i.strftime("%H:%M")} → '
-                        f'{d_f.strftime("%d/%m/%Y")} {t_f.strftime("%H:%M")}</div>',
-                        unsafe_allow_html=True)
-            except Exception:
-                pass
-
-        else:  # Horario Semi-específico
-            import datetime as _dtv
-            c1, c2, c3 = st.columns(3, gap="large")
-            with c1: sem_val = st.multiselect("Semanas:", SEMANAS, key="nv_sem2")
-            with c2: dia_val = st.multiselect("Días:",    DIAS,    key="nv_dia2")
-            with c3:
-                t_is = st.time_input("🕐 Hora Inicio", key="nv_tis")
-                t_fs = st.time_input("🕐 Hora Fin",    key="nv_tfs")
-            start_val, end_val = str(t_is), str(t_fs)
-            if not sem_val: _errors.append("Selecciona al menos una semana.")
-            if not dia_val: _errors.append("Selecciona al menos un día.")
-            try:
-                if _dtv.datetime.combine(_dtv.date.today(), t_fs) <= _dtv.datetime.combine(_dtv.date.today(), t_is):
-                    _errors.append("⚠️ La hora de fin debe ser posterior a la hora de inicio.")
-            except Exception:
-                pass
+                    c1, c2, c3 = st.columns(3, gap="large")
+                    with c1: sem_val = st.multiselect("Semanas:", SEMANAS, key="nv_sem2_esp")
+                    with c2: dia_val = st.multiselect("Días:",    DIAS,    key="nv_dia2_esp")
+                    with c3:
+                        t_is = st.time_input("🕐 Hora Inicio", key="nv_tis_esp")
+                        t_fs = st.time_input("🕐 Hora Fin",    key="nv_tfs_esp")
+                        
+                    start_val, end_val = str(t_is), str(t_fs)
+                    
+                    if not sem_val: _errors.append("Selecciona al menos una semana.")
+                    if not dia_val: _errors.append("Selecciona al menos un día.")
+                    try:
+                        if _dtv.datetime.combine(_dtv.date.today(), t_fs) <= _dtv.datetime.combine(_dtv.date.today(), t_is):
+                            _errors.append("⚠️ La hora de fin debe ser posterior a la hora de inicio.")
+                    except Exception:
+                        pass
 
         for err in _errors:
             st.warning(err)
@@ -290,6 +315,7 @@ def _ventana_fields(cliente: str):
             st.markdown(amb_html, unsafe_allow_html=True)
             ambiente = st.selectbox("Ambiente:", list(DESC_AMBIENTES.keys()), key="nv_ambiente")
 
+    # Mapeo de datos para envío
     datos = {
         "en_uso": en_uso, "ambiente": ambiente,
         "descripcion": DESC_AMBIENTES[ambiente][1],
@@ -300,7 +326,9 @@ def _ventana_fields(cliente: str):
         "Días_Rango": ",".join(dia_val) if dia_val else None,
         "criticidad": criticidad, "motivo_criticidad": motivo_crit,
         "comentarios": comentarios,
+        "Tipo_Cliente": "Complejo" if criticidad == "Alta" else "Normal"
     }
+    
     return (None, None) if _errors else (vms_sel, datos)
 
 
@@ -314,7 +342,6 @@ def render():
     clientes_sel   = _cliente_selector(clientes_lista)
 
     st.markdown("---")
-  #  st.markdown("### 📋 Registro de la Notificación")
 
     if clientes_sel:
         st.markdown(
@@ -349,7 +376,6 @@ def render():
             # Si canal cambió, resetear estado guardado
             if canal != prev_canal:
                 st.session_state["_notif_canal_prev"] = canal
-                # Always land on "Sin Respuesta" when switching canal
                 opciones_nuevo = ESTADOS_POR_CANAL.get(canal, [])
                 sin_resp_idx = opciones_nuevo.index("Sin Respuesta") if "Sin Respuesta" in opciones_nuevo else 0
                 st.session_state["_notif_estado_idx"] = sin_resp_idx
@@ -412,13 +438,30 @@ def render():
             elif not creado_por.strip():
                 st.error("Indica quién registra la notificación.")
             elif is_agenda and (not vms_sel_ventana or datos_ventana is None):
-                st.error("Selecciona al menos una VM para registrar la ventana.")
+                st.error("Selecciona al menos una VM para registrar la ventana o verifica los datos faltantes.")
             else:
                 ok_notif = guardar_notificaciones_masivas(
                     clientes_sel, creado_por.strip(), estado, canal, "1", notas.strip()
                 )
                 ok_ventana = True
+                
+                # Ejecutar procesos solo si se agenda ventana
                 if is_agenda and vms_sel_ventana and datos_ventana:
+                    
+                    # 1. Aseguramos la actualización directa del Tipo_Cliente en la BD:
+                    try:
+                        conn = sqlite3.connect("migraciones.db")
+                        conn.execute(
+                            'UPDATE DIRECTORIO_CLIENTE SET "Tipo_Cliente" = ? WHERE "Cliente" = ?', 
+                            (datos_ventana["Tipo_Cliente"], clientes_sel[0])
+                        )
+                        conn.commit()
+                    except Exception as e:
+                        print(f"Error actualizando Tipo_Cliente: {e}")
+                    finally:
+                        conn.close()
+                        
+                    # 2. Guardamos la ventana
                     ok_ventana = guardar_ventana_mantenimiento(clientes_sel[0], vms_sel_ventana, datos_ventana)
 
                 if ok_notif and ok_ventana:

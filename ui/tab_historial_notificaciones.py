@@ -4,7 +4,9 @@ Historial de notificaciones + editor de estado/notas de una notificación.
 Solo toca NOTIFICACIONES_CLIENTES — no mezcla con VMs ni ESTADO_VMS.
 """
 
+import io
 import sqlite3
+from datetime import date
 import pandas as pd
 import streamlit as st
 from ui.components import section_card
@@ -232,9 +234,47 @@ def render():
             mask    = df_view.astype(str).apply(
                 lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)
             df_view = df_view[mask]
-        st.markdown(
-            f'<div style="font-size:.76rem;color:#8A95A3;margin-bottom:8px;">'
-            f'Mostrando {len(df_view)} registros</div>', unsafe_allow_html=True)
+        
+        # Opciones de descarga y conteo
+        col_txt, col_csv, col_xlsx = st.columns([6, 2, 2])
+        
+        with col_txt:
+            st.markdown(
+                f'<div style="font-size:.76rem;color:#8A95A3;margin-top:10px;">'
+                f'Mostrando {len(df_view)} registros</div>', unsafe_allow_html=True)
+                
+        with col_xlsx:
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                # Removemos rowid si por alguna razón se unió al df
+                export_df = df_view.drop(columns=["rowid"], errors="ignore")
+                export_df.to_excel(writer, index=False, sheet_name="Historial_Notificaciones")
+                # Auto-ajuste simple de columnas
+                for column in writer.sheets["Historial_Notificaciones"].columns:
+                    max_length = 0
+                    column = [cell for cell in column]
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = (max_length + 2)
+                    writer.sheets["Historial_Notificaciones"].column_dimensions[column[0].column_letter].width = adjusted_width
+
+            st.download_button("📥 Excel", data=buf.getvalue(),
+                               file_name=f"historial_notificaciones_{date.today()}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
+                               
+        with col_csv:
+            export_df = df_view.drop(columns=["rowid"], errors="ignore")
+            csv_data = export_df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button("📥 CSV", data=csv_data,
+                               file_name=f"historial_notificaciones_{date.today()}.csv",
+                               mime="text/csv",
+                               use_container_width=True)
+
         st.dataframe(df_view, use_container_width=True, hide_index=True)
 
     # ── Editor ────────────────────────────────────────────

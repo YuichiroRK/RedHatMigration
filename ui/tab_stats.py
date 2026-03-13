@@ -157,7 +157,7 @@ def _load_historical_data(n_weeks: int) -> pd.DataFrame:
 
 
 # ──────────────────────────────────────────────────────────────
-# CLIENT SNAPSHOT (NUEVA LÓGICA ESTRICTA)
+# CLIENT SNAPSHOT (NUEVA LÓGICA ESTRICTA DE HISTORIAL)
 # ──────────────────────────────────────────────────────────────
 def _load_client_snapshot() -> pd.DataFrame:
     conn = sqlite3.connect(DB_PATH)
@@ -185,11 +185,16 @@ def _load_client_snapshot() -> pd.DataFrame:
         df_notif = pd.read_sql_query(
             'SELECT "Cliente", "Fecha Notificación", "Estado_Notificacion" FROM NOTIFICACIONES_CLIENTES', conn)
         df_notif['Fecha Notificación'] = pd.to_datetime(df_notif['Fecha Notificación'], errors='coerce')
-        # Obtener SOLO la última notificación por cliente para las reglas de contacto
+        
+        # Último estado para reglas de rebotado final
         df_notif_latest = df_notif.sort_values('Fecha Notificación').groupby('Cliente').last().reset_index()
         dict_latest_notif = df_notif_latest.set_index('Cliente')['Estado_Notificacion'].to_dict()
+        
+        # Todos los estados históricos para reglas de Sin Respuesta
+        dict_all_notifs = df_notif.groupby('Cliente')['Estado_Notificacion'].apply(lambda x: set(x.dropna())).to_dict()
     except Exception:
         dict_latest_notif = {}
+        dict_all_notifs = {}
 
     conn.close()
 
@@ -200,26 +205,34 @@ def _load_client_snapshot() -> pd.DataFrame:
         total_vms = len(estados)
         vms_ok    = estados.count("Migrada OK") + estados.count("Éxito")
 
-        latest_notif_est = dict_latest_notif.get(cli)
+        estados_notif_set = dict_all_notifs.get(cli, set())
+        latest_notif_est  = dict_latest_notif.get(cli)
 
         # ── 1. Banderas de Reglas de Negocio (Notificaciones) ──
-        # Sin Contactar: No hay registros o la última notif fue Rebotado
-        sin_contactar = (latest_notif_est is None) or (latest_notif_est == "Correo Rebotado")
+        respuestas_efectivas = {"Agenda Confirmada", "Cliente por Contactar", "Recibido"}
+        envios_realizados    = {"Correo Enviado", "Sin Respuesta", "Enviado"}
         
-        # Sin Respuesta: Última notificación fue exactamente "Correo Enviado" o "Sin Respuesta"
-        sin_respuesta = (latest_notif_est in ("Correo Enviado", "Sin Respuesta"))
-        
-        # Notificados: Efectivamente contactados (última NO fue rebotado)
-        notificado = (latest_notif_est is not None) and (latest_notif_est != "Correo Rebotado")
+        tiene_respuesta = bool(estados_notif_set.intersection(respuestas_efectivas))
+        tiene_enviado   = bool(estados_notif_set.intersection(envios_realizados))
+
+        # Regla estricta: Correo enviado alguna vez, pero JAMÁS respondió 
+        # (puede tener rebotados en medio)
+        sin_respuesta_flag = tiene_enviado and not tiene_respuesta
+
+        # Notificado: Al menos fue contactado y su último correo no rebotó
+        notificado_flag = (latest_notif_est is not None) and (latest_notif_est not in ("Correo Rebotado", "Rebotado"))
+
+        # Sin Contactar: Ninguna notificación O la última rebotó (y nunca se ha logrado un 'Sin Respuesta' o 'Respuesta efectiva')
+        sin_contactar_flag = (not estados_notif_set) or (latest_notif_est in ("Correo Rebotado", "Rebotado") and not sin_respuesta_flag and not tiene_respuesta)
 
         # ── 2. Banderas de Reglas de Negocio (VMs) ──
-        agendado = "Agendado" in estados
-        migrado_ok = (total_vms > 0) and all(e in ("Migrada OK", "Éxito") for e in estados)
+        agendado_flag = "Agendado" in estados
+        migrado_ok_flag = (total_vms > 0) and all(e in ("Migrada OK", "Éxito") for e in estados)
 
         # ── 3. Clasificación Visual del Cliente (Prioridad) ──
-        if migrado_ok:
+        if migrado_ok_flag:
             est_cli = "Migrado OK"
-        elif agendado:
+        elif agendado_flag:
             est_cli = "Agendado"
         elif any(e in ("Rollback Inmediato", "Rollback Tras Seguimiento", "En Seguimiento", "Fallido", "Fallida") for e in estados):
             est_cli = "Fallido" # Fallback
@@ -227,9 +240,9 @@ def _load_client_snapshot() -> pd.DataFrame:
                 if e in estados:
                     est_cli = e
                     break
-        elif sin_respuesta:
+        elif sin_respuesta_flag:
             est_cli = "Sin Respuesta"
-        elif notificado:
+        elif notificado_flag or tiene_respuesta:
             est_cli = "Notificado"
         else:
             est_cli = "Sin Contactar"
@@ -250,11 +263,11 @@ def _load_client_snapshot() -> pd.DataFrame:
             "Estado_Cliente":    est_cli,
             "Total VMs":         total_vms,
             "VMs Éxito":         vms_ok,
-            "Notificado":        notificado,
-            "Sin Contactar":     sin_contactar,
-            "Sin Respuesta":     sin_respuesta,
-            "Agendado_Flag":     agendado,
-            "Migrado_OK_Flag":   migrado_ok,
+            "Notificado":        notificado_flag,
+            "Sin Contactar":     sin_contactar_flag,
+            "Sin Respuesta":     sin_respuesta_flag,
+            "Agendado_Flag":     agendado_flag,
+            "Migrado_OK_Flag":   migrado_ok_flag,
             "Última Notif.":     latest_notif_est,
             "Fecha_Resolucion":  fecha_resolucion,
         })
@@ -677,7 +690,7 @@ def _render_clientes(df_clients: pd.DataFrame):
         ("🏢", "Total Clientes",       total,   "#FF7800", "en sistema"),
         ("📨", "Notificados",          notif,   "#0288D1", "último estado ≠ rebotado"),
         ("⚠️", "Sin Contactar",        sin_c,   "#E53E3E", "sin notif. o rebotado"),
-        ("🔕", "Sin Respuesta",        sin_resp,"#718096", "último estado: correo enviado"),
+        ("🔕", "Sin Respuesta",        sin_resp,"#718096", "enviado sin respuesta firme"),
         ("📅", "Agendados",            agend,   "#3182CE", "≥1 VM con ventana"),
         ("✅", "Migrados OK",          ok_wk,   "#2E7D32", "concluidos esta semana"),
         ("📈", "Migrados OK (Acum.)",  ok_acum, "#1B5E20", "total histórico"),

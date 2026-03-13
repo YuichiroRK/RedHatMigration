@@ -69,15 +69,22 @@ def _time_picker(label: str, key: str, initial: str = "") -> str:
     return f"{int(h):02d}:{int(m):02d}"
 
 
-def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffix: str = ""):
+def render_status_editor(
+    vm_id: str,
+    cliente: str,
+    estado_actual: str,
+    key_suffix: str = "",
+    allowed_states: list | None = None,
+):
     """
-    Renders the full migration status editor for a VM.
-    Loads current data from ESTADO_VMS, shows form with:
-      - Estado dropdown
-      - Fecha ejecución  (date picker)
-      - Fecha finalización (date picker)
-      - Observaciones (text area, shown when state is Fallida/RollBack/En Seguimiento)
+    Renders the migration status editor for a VM.
 
+    allowed_states: if provided, restricts the selectbox to those states only.
+      - Calendar context:     ["En Seguimiento", "Rollback Inmediato"]
+      - Seguimiento context:  ["Migrada OK", "Rollback Tras Seguimiento"]
+      - None → all VALID_STATES (existing behaviour)
+
+    Mandatory Observaciones_Fallo for any Rollback state.
     key_suffix: unique string to avoid widget key collisions between tabs.
     """
     # Load existing record from ESTADO_VMS
@@ -134,10 +141,22 @@ def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffi
     # ── Form fields ──────────────────────────────────────
     k = f"{vm_id}_{key_suffix}"
 
+    _state_opts = allowed_states if allowed_states else VALID_STATES
+    _def_idx    = _state_opts.index(cur_estado) if cur_estado in _state_opts else 0
+
+    if allowed_states:
+        st.markdown(
+            f'<div style="background:#EBF8FF;border:1px solid #90CDF4;border-radius:8px;'
+            f'padding:7px 12px;font-size:.73rem;color:#2B6CB0;margin-bottom:8px;">'
+            f'🔒 Transiciones permitidas desde <b>{cur_estado}</b>: '
+            + " · ".join(f"<b>{s}</b>" for s in allowed_states) +
+            f'</div>',
+            unsafe_allow_html=True)
+
     nuevo_estado = st.selectbox(
         "Nuevo estado:",
-        VALID_STATES,
-        index=VALID_STATES.index(cur_estado) if cur_estado in VALID_STATES else 0,
+        _state_opts,
+        index=_def_idx,
         key=f"sel_est_{k}",
     )
 
@@ -165,10 +184,10 @@ def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffi
                                       initial=cur_ffin.strftime("%H:%M") if cur_ffin else "")
 
     # Observations — always visible but required label changes
-    needs_obs = nuevo_estado in ("Rollback Inmediato", "Rollback Tras Seguimiento", "En Seguimiento")
-    obs_label = ("⚠️ Observaciones del fallo (requerido)"
-                 if nuevo_estado == "Rollback Inmediato"
-                 else "📝 Observaciones")
+    _is_rollback = nuevo_estado in ("Rollback Inmediato", "Rollback Tras Seguimiento")
+    needs_obs    = _is_rollback or nuevo_estado == "En Seguimiento"
+    obs_label    = ("⚠️ Motivo del Rollback (obligatorio)"
+                    if _is_rollback else "📝 Observaciones")
     observaciones = st.text_area(
         obs_label,
         value=cur_obs,
@@ -185,8 +204,8 @@ def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffi
         type="primary",
         use_container_width=True,
     ):
-        if nuevo_estado == "Rollback Inmediato" and not observaciones.strip():
-            st.warning("⚠️ Agrega observaciones del fallo antes de guardar.")
+        if _is_rollback and not observaciones.strip():
+            st.warning("⚠️ El motivo del Rollback es obligatorio. Por favor descríbelo antes de guardar.")
             return
 
         fej_str  = f"{fej_date} {fej_time_str}:00"  if fej_date  else ""

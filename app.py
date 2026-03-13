@@ -37,6 +37,12 @@ try:
 except ImportError:
     _has_stats = False
 
+try:
+    from ui import tab_seguimiento
+    _has_seguimiento = True
+except ImportError:
+    _has_seguimiento = False
+
 _ADMIN_PASSWORD = "liberty2025"
 
 
@@ -72,11 +78,10 @@ with st.sidebar:
         "📢 Notificaciones Clientes",
         "📭 Seguimiento de Notificaciones",
         "📊 Informes",
-        "📅 Ver Calendario"
-       # "📊 Estadística de Ventanas",
+        "📅 Ver Calendario",
     ]
-   # if _has_logs:     NAV_OPTIONS.append("📝 Logs y Seguimiento")
-    if _has_clientes: NAV_OPTIONS.append("👤 Clientes")
+    if _has_seguimiento: NAV_OPTIONS.append("🔍 VMs En Seguimiento")
+    if _has_clientes:    NAV_OPTIONS.append("👤 Clientes")
 
     opcion = st.radio(
         "Navegación Principal",
@@ -87,27 +92,33 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Liberty Networks - Migration Tool v2.0")
 
-if opcion == "📅 Ver Calendario":
-    tab_calendario.render()
-
-elif opcion == "📊 Estadística de Ventanas":
-    tab_agendados.render()
-
-elif opcion == "📢 Notificaciones Clientes":
+if opcion == "📢 Notificaciones Clientes":
     if _has_notif:
         tab_notificaciones.render()
     else:
         st.warning("Módulo de notificaciones no disponible.")
 
-elif opcion == "📊 Informes" and _has_stats:
-    tab_stats.render()
+elif opcion == "📭 Seguimiento de Notificaciones":
+    if _has_hist:
+        tab_historial_notificaciones.render()
+    else:
+        st.warning("Módulo no disponible.")
 
-elif opcion == "📝 Logs y Seguimiento" and _has_logs:
-    tab_logs.render()
+elif opcion == "📊 Informes":
+    if _has_stats:
+        tab_stats.render()
+    else:
+        st.warning("Módulo de informes no disponible.")
 
-elif opcion == "📭 Seguimiento de Notificaciones" and _has_hist:
-    tab_historial_notificaciones.render()
+elif opcion == "📅 Ver Calendario":
+    tab_calendario.render()
 
-elif opcion == "👤 Clientes" and _has_clientes:
-    if _check_password("clientes"):
+elif opcion == "🔍 VMs En Seguimiento":
+    if _has_seguimiento:
+        tab_seguimiento.render()
+    else:
+        st.warning("Módulo no disponible.")
+
+elif opcion == "👤 Clientes":
+    if _has_clientes and _check_password("clientes"):
         tab_clientes.render()
