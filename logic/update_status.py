@@ -6,7 +6,7 @@ Upsert de estado de migración en la tabla ESTADO_VMS.
 import sqlite3
 from ui.db_utils import DB_PATH
 
-VALID_STATES = ["Agendado", "Éxito", "RollBack", "Fallida", "En Seguimiento"]
+VALID_STATES = ["Agendado", "Migrada OK", "Rollback Tras Seguimiento", "Rollback Inmediato", "En Seguimiento"]
 
 
 def upsert_vm_status(

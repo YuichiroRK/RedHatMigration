@@ -15,7 +15,7 @@ import pandas as pd
 # Descripciones de ambiente
 # ─────────────────────────────────────────────────────────────
 DESC_AMBIENTES = {
-    "PRODUCCIÓN (PROD)": ("🔴 Producción",       "Servicios críticos en vivo para el cliente. Cualquier cambio impacta directamente al usuario final.", "amb-prod"),
+    "PRODUCCION (PROD)": ("🔴 Producción",       "Servicios críticos en vivo para el cliente. Cualquier cambio impacta directamente al usuario final.", "amb-prod"),
     "DESARROLLO (DEV)":  ("🟢 Desarrollo",       "Entorno de construcción y pruebas internas del equipo técnico. Sin impacto en producción.",          "amb-dev"),
     "CALIDAD (QA)":   ("🟡 Quality Assurance","Validación de calidad y pruebas de aceptación de usuario antes de subir a producción.",              "amb-qa"),
 }
@@ -61,14 +61,24 @@ def chip_input(label: str, session_key: str, placeholder: str = "Escribe y presi
     if session_key not in st.session_state:
         st.session_state[session_key] = []
 
-    input_key = f"_input_{session_key}"
+    input_key  = f"_input_{session_key}"
+    clear_key  = f"_clear_input_{session_key}"
+
+    # If a button-add was requested last run, absorb the value now
+    # (before the text_input widget is instantiated)
+    if st.session_state.get(f"_btn_pending_{session_key}"):
+        pending_val = st.session_state.get(input_key, "").strip()
+        if pending_val and pending_val not in st.session_state[session_key]:
+            st.session_state[session_key].append(pending_val)
+        st.session_state[input_key] = ""          # safe: widget not yet rendered
+        st.session_state[f"_btn_pending_{session_key}"] = False
 
     # ── on_change: fires when user presses Enter ──────────
     def _add_chip():
         v = st.session_state.get(input_key, "").strip()
         if v and v not in st.session_state[session_key]:
             st.session_state[session_key].append(v)
-        st.session_state[input_key] = ""   # clear field after adding
+        st.session_state[input_key] = ""   # safe inside on_change callback
 
     chips: list = st.session_state[session_key]
 
@@ -114,7 +124,9 @@ def chip_input(label: str, session_key: str, placeholder: str = "Escribe y presi
         )
     with col_btn:
         if st.button("➕", key=f"_btn_{session_key}", use_container_width=True):
-            _add_chip()
+            # Can't modify input widget state after instantiation.
+            # Set a flag and rerun — the pending block above handles it next render.
+            st.session_state[f"_btn_pending_{session_key}"] = True
             st.rerun()
 
     if chips:
@@ -176,16 +188,16 @@ def dashboard_agendados(df_agendadas: pd.DataFrame):
         return int((df_agendadas["estado"] == val).sum()) if "estado" in df_agendadas.columns else 0
 
     total_ag    = len(df_agendadas)
-    exito       = _cnt("Éxito")
-    sin_agendar  = _cnt("Sin Agendar")
-    rollback    = _cnt("RollBack")
-    Agendados   = _cnt("Agendado")
-    fallidas    = _cnt("Fallida")
+    exito       = _cnt("Migrada OK")
+    pendientes  = _cnt("Pendiente")
+    rollback    = _cnt("Rollback Tras Seguimiento")
+    asignadas   = _cnt("Asignada")
+    fallidas    = _cnt("Rollback Inmediato")
     seguimiento = _cnt("En Seguimiento")
 
-    # Si no hay columna estado, todas son Sin Agendar
+    # Si no hay columna estado, todas son pendientes
     if "estado" not in df_agendadas.columns:
-        sin_agendar = total_ag
+        pendientes = total_ag
 
     # ── Totales globales desde DATABASE ─────────────────────
     try:
@@ -205,7 +217,7 @@ def dashboard_agendados(df_agendadas: pd.DataFrame):
     html += '<div class="stat-grid stat-grid-3">'
     html += _sc("🗃️", "Total VMs en el Sistema", total_global, "stat-total")
     html += _sc("📅", "VMs Agendadas",            total_ag,    "stat-orange")
-    html += _sc("⏸️", "VMs Sin Agendar",          no_agendadas,"stat-Sin Agendar")
+    html += _sc("⏸️", "VMs Sin Agendar",          no_agendadas,"stat-pendiente")
     html += '</div>'
     html += _prog(
         "📊 Progreso de Agendamiento — VMs agendadas vs total del proyecto",
@@ -216,12 +228,12 @@ def dashboard_agendados(df_agendadas: pd.DataFrame):
     html += _sec_titulo("📋 Estado de Migraciones (VMs Agendadas)")
     html += '<div class="stat-grid">'
     html += _sc("🗄️", "Total Agendadas",              total_ag,             "stat-total")
-    html += _sc("✅", "Éxito",                         exito,                "stat-exito")
-    html += _sc("⏳", "Sin Agendar",                    sin_agendar,           "stat-Sin Agendar")
-    html += _sc("↩️", "RollBack",                      rollback,             "stat-rollback")
+    html += _sc("✅", "Migrada OK",                         exito,                "stat-exito")
+    html += _sc("⏳", "Pendientes",                    pendientes,           "stat-pendiente")
+    html += _sc("↩️", "Rollback Tras Seguimiento",                      rollback,             "stat-rollback")
     html += '</div>'
     html += '<div class="stat-grid">'
-    html += _sc("⚙️", "Agendados",                    Agendados,            "stat-Agendado")
+    html += _sc("⚙️", "Asignadas",                    asignadas,            "stat-asignada")
     html += _sc("❌", "Fallidas",                      fallidas,             "stat-fallida")
     html += _sc("🔍", "En Seguimiento",                seguimiento,          "stat-seguimiento")
     html += _sc("🟢", "Completadas + Seguimiento",     exito + seguimiento,  "stat-exito")

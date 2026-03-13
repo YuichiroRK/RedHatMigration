@@ -24,7 +24,7 @@ ESTADO_ICON = {
     "RollBack":"↩️","Fallida":"❌","En Seguimiento":"🔍",
 }
 TURNO_DESC  = {"Mañana":"06:00–14:00","Tarde":"14:00–22:00","Noche":"22:00–06:00 (+1d)"}
-AMB_COLORS  = {"PROD":"#E53E3E","DEV":"#38A169","QA":"#D69E2E"}
+AMB_COLORS  = {"PRODUCCION (PROD)":"#E53E3E","DESARROLLO (DEV)":"#38A169","CALIDAD (QA)":"#D69E2E"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ def _vm_detail(vm_id: str):
     with col1:
         st.markdown(card("📋 Información General",
             irow("Ambiente",    amb, AMB_COLORS.get(amb))
-            + irow("Criticidad",  gv("criticidad"))
+            + irow("Complejidad",  gv("criticidad"))
             + irow("Motivo",      gv("motivo_criticidad"))
             + irow("En Uso",      gv("en_uso"))
         ), unsafe_allow_html=True)

@@ -12,10 +12,10 @@ from logic.update_status import VALID_STATES, get_vm_status, upsert_vm_status
 
 STATE_META = {
     "Agendado":       {"color": "#3182CE", "icon": "🔵"},
-    "Éxito":          {"color": "#38A169", "icon": "✅"},
+    "Migrada OK":     {"color": "#38A169", "icon": "✅"},
     "Sin Agendar":    {"color": "#D69E2E", "icon": "⏳"},
-    "RollBack":       {"color": "#E53E3E", "icon": "↩️"},
-    "Fallida":        {"color": "#C53030", "icon": "❌"},
+    "Rollback Tras Seguimiento": {"color": "#E53E3E", "icon": "↩️"},
+    "Rollback Inmediato":        {"color": "#C53030", "icon": "❌"},
     "En Seguimiento": {"color": "#805AD5", "icon": "🔍"},
 }
 
@@ -165,9 +165,9 @@ def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffi
                                       initial=cur_ffin.strftime("%H:%M") if cur_ffin else "")
 
     # Observations — always visible but required label changes
-    needs_obs = nuevo_estado in ("Fallida", "RollBack", "En Seguimiento")
+    needs_obs = nuevo_estado in ("Rollback Inmediato", "Rollback Tras Seguimiento", "En Seguimiento")
     obs_label = ("⚠️ Observaciones del fallo (requerido)"
-                 if nuevo_estado == "Fallida"
+                 if nuevo_estado == "Rollback Inmediato"
                  else "📝 Observaciones")
     observaciones = st.text_area(
         obs_label,
@@ -185,7 +185,7 @@ def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffi
         type="primary",
         use_container_width=True,
     ):
-        if nuevo_estado == "Fallida" and not observaciones.strip():
+        if nuevo_estado == "Rollback Inmediato" and not observaciones.strip():
             st.warning("⚠️ Agrega observaciones del fallo antes de guardar.")
             return
 
@@ -202,7 +202,7 @@ def render_status_editor(vm_id: str, cliente: str, estado_actual: str, key_suffi
         )
         if ok:
             st.success(f"✅ Estado actualizado a **{nuevo_estado}** correctamente.")
-            if nuevo_estado == "Éxito":
+            if nuevo_estado == "Migrada OK":
                 st.balloons()
             st.rerun()
         else:

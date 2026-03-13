@@ -132,7 +132,7 @@ def _tt(ev):
         + r("Cliente",   ev["cliente"] or "—")
         + r("Horario",   f'{ev["start_time"]} – {ev["end_time"]}')
         + r("Ambiente",  f'<span class="a{amb}">{ev["ambiente"] or "—"}</span>')
-        + r("Criticidad",ev["criticidad"] or "—")
+        + r("Complejidad",ev["criticidad"] or "—")
         + r("Estado",    f'<span class="badge" style="background:{badge}">{ev["estado"]}</span>')
         + r("Apps",      apps)
         + f'<hr/>'+ r("Notas", f'<i>{com}</i>') + '</div>'
@@ -266,11 +266,11 @@ def events_to_df(events):
     return pd.DataFrame([{
         "Cliente":    e["cliente"],
         "VM ID":      e["vm_id"],
-        "Horario":    f'{e["start_time"]} – {e["end_time"]}',
         "Fecha":      e.get("date", ""),
+        "Horario":    f'{e["start_time"]} – {e["end_time"]}',
         "Estado":     e["estado"],
         "Tipo":       e["tipo_ventana"],
         "Ambiente":   e["ambiente"],
-        "Criticidad": e["criticidad"],
+        "Complejidad": e["criticidad"],
         "Apps":       e["apps"],
     } for e in events])

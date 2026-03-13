@@ -22,11 +22,11 @@ TURNO_HORAS = {
 
 ESTADOS_META = {
     "Agendado":       {"icon": "🔵", "color": "#3182CE", "label": "Agendados"},
-    "Éxito":          {"icon": "✅", "color": "#38A169", "label": "Éxito"},
+    "Migrada OK":     {"icon": "✅", "color": "#38A169", "label": "Migrada OK"},
     "Sin Agendar":    {"icon": "⏳", "color": "#D69E2E", "label": "Sin Agendar"},
     "En Seguimiento": {"icon": "🔍", "color": "#805AD5", "label": "Seguimiento"},
-    "RollBack":       {"icon": "↩️", "color": "#E53E3E", "label": "RollBack"},
-    "Fallida":        {"icon": "❌", "color": "#C53030", "label": "Fallidas"},
+    "Rollback Tras Seguimiento": {"icon": "↩️", "color": "#E53E3E", "label": "Rollback Tras Seg."},
+    "Rollback Inmediato":        {"icon": "❌", "color": "#C53030", "label": "Rollback Inmediato"},
 }
 
 
@@ -155,7 +155,7 @@ def _dashboard_global(df_all: pd.DataFrame):
         counts[est] = int((df_all[col_e] == est).sum()) if col_e else 0
 
     pct_ag    = round(total_ag / total_sistema * 100, 1) if total_sistema else 0
-    pct_exito = round(counts["Éxito"] / total_sistema * 100, 1) if total_sistema else 0
+    pct_exito = round(counts["Migrada OK"] / total_sistema * 100, 1) if total_sistema else 0
 
     st.markdown('<div class="sec-title">🌐 Estadísticas Globales del Proyecto</div>',
                 unsafe_allow_html=True)
@@ -277,7 +277,7 @@ def _dashboard_global(df_all: pd.DataFrame):
 
     st.markdown(
         prog(f"🔧 Trabajadas — {total_ag} de {total_sistema}", pct_ag, "#FF7800")
-        + prog(f"✅ Migración completada — {counts['Éxito']} de {total_sistema}", pct_exito, "#38A169"),
+        + prog(f"✅ Migración completada — {counts['Migrada OK']} de {total_sistema}", pct_exito, "#38A169"),
         unsafe_allow_html=True,
     )
 
@@ -293,7 +293,7 @@ def _cliente_progress(df_cli: pd.DataFrame, total_sistema: int, col_e):
 
     pct_ag    = round(total_ag / total_sistema * 100, 1) if total_sistema else 0
     # Migración exitosa sobre total en sistema del cliente
-    pct_exito = round(counts["Éxito"] / total_sistema * 100, 1) if total_sistema else 0
+    pct_exito = round(counts["Migrada OK"] / total_sistema * 100, 1) if total_sistema else 0
 
     cards = '<div class="mc">'
     for est, meta in ESTADOS_META.items():
@@ -317,7 +317,7 @@ def _cliente_progress(df_cli: pd.DataFrame, total_sistema: int, col_e):
 
     st.markdown(
         prog(f"Agendamiento vs sistema ({total_ag}/{total_sistema})", pct_ag, "#FF7800")
-        + prog(f"Migración completada ({counts['Éxito']}/{total_sistema})", pct_exito, "#38A169"),
+        + prog(f"Migración completada ({counts['Migrada OK']}/{total_sistema})", pct_exito, "#38A169"),
         unsafe_allow_html=True,
     )
 
@@ -455,7 +455,7 @@ def render():
                       if col_a and col_a in df_view.columns else [])
         with fc2:
             col_c  = cm.get("criticidad")
-            crit_f = (st.multiselect("Criticidad:", df_view[col_c].dropna().unique().tolist(), key="ag_f_crit")
+            crit_f = (st.multiselect("Complejidad:", df_view[col_c].dropna().unique().tolist(), key="ag_f_crit")
                       if col_c and col_c in df_view.columns else [])
         with fc3:
             est_f  = (st.multiselect("Estado:", df_view[col_e].dropna().unique().tolist(), key="ag_f_est")

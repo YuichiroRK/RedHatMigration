@@ -251,8 +251,8 @@ def render_vm_editor(vm_id: str, key_suffix: str = "", cliente: str = ""):
     col_uso  = cm.get("en_uso","En_Uso")
     col_mot  = cm.get("motivo_criticidad","Motivo_Criticidad")
 
-    AMBIENTES  = ["PROD","DEV","QA"]
-    CRITS      = ["Critico","Alta","Media","Baja"]
+    AMBIENTES  = ["PRODUCCION (PROD)","DESARROLLO (DEV)","CALIDAD (QA)"]
+    CRITS      = ["Alta","Media","Baja"]
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -261,15 +261,17 @@ def render_vm_editor(vm_id: str, key_suffix: str = "", cliente: str = ""):
         new_amb = st.selectbox("Ambiente", AMBIENTES, index=amb_idx, key=f"ed_amb_{k}")
     with c2:
         cur_crit = _g(row, col_crit)
+        # Migrate legacy "Critico"/"Crítico" → "Alta"
+        if cur_crit in ("Critico","Crítico"): cur_crit = "Alta"
         crit_idx = CRITS.index(cur_crit) if cur_crit in CRITS else 0
-        new_crit = st.selectbox("Criticidad", CRITS, index=crit_idx, key=f"ed_crit_{k}")
+        new_crit = st.selectbox("Complejidad del cliente", CRITS, index=crit_idx, key=f"ed_crit_{k}")
     with c3:
         cur_uso = _g(row, col_uso)
         uso_opts = ["Si","No"]
         uso_idx  = uso_opts.index(cur_uso) if cur_uso in uso_opts else 0
-        new_uso  = st.selectbox("En Uso", uso_opts, index=uso_idx, key=f"ed_uso_{k}")
+        new_uso  = st.selectbox("¿La máquina está actualmente en uso?", uso_opts, index=uso_idx, key=f"ed_uso_{k}")
 
-    new_motivo = st.text_input("Motivo Criticidad", value=_g(row, col_mot),
+    new_motivo = st.text_input("Motivo Complejidad", value=_g(row, col_mot),
                                 key=f"ed_mot_{k}")
 
     # ── Row 3: Horario ────────────────────────────────────
