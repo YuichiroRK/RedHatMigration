@@ -70,12 +70,12 @@ with st.sidebar:
 
     NAV_OPTIONS = [
         "📢 Notificaciones Clientes",
-        "📅 Ver Calendario",
-        "📊 Estadística de Ventanas",
+        "📭 Seguimiento de Notificaciones",
+        "📊 Informes",
+        "📅 Ver Calendario"
+       # "📊 Estadística de Ventanas",
     ]
-    if _has_stats:    NAV_OPTIONS.append("👥 Estadística de Clientes")
-    if _has_logs:     NAV_OPTIONS.append("📝 Logs y Seguimiento")
-    if _has_hist:     NAV_OPTIONS.append("📭 Ver Notificaciones")
+   # if _has_logs:     NAV_OPTIONS.append("📝 Logs y Seguimiento")
     if _has_clientes: NAV_OPTIONS.append("👤 Clientes")
 
     opcion = st.radio(
@@ -99,13 +99,13 @@ elif opcion == "📢 Notificaciones Clientes":
     else:
         st.warning("Módulo de notificaciones no disponible.")
 
-elif opcion == "👥 Estadística de Clientes" and _has_stats:
+elif opcion == "📊 Informes" and _has_stats:
     tab_stats.render()
 
 elif opcion == "📝 Logs y Seguimiento" and _has_logs:
     tab_logs.render()
 
-elif opcion == "📭 Ver Notificaciones" and _has_hist:
+elif opcion == "📭 Seguimiento de Notificaciones" and _has_hist:
     tab_historial_notificaciones.render()
 
 elif opcion == "👤 Clientes" and _has_clientes:

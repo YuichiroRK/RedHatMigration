@@ -28,7 +28,6 @@ ESTADOS_POR_CANAL = {
     "Contacto Directo": [
         "Cliente por Contactar",
         "Agenda Confirmada",
-        "Sin Respuesta",
     ],
 }
 
@@ -315,7 +314,7 @@ def render():
     clientes_sel   = _cliente_selector(clientes_lista)
 
     st.markdown("---")
-    st.markdown("### 📋 Registro de la Notificación")
+  #  st.markdown("### 📋 Registro de la Notificación")
 
     if clientes_sel:
         st.markdown(
@@ -378,7 +377,7 @@ def render():
             "**📨 Email:** Correo Enviado · Correo Rebotado · "
             "Cliente por Contactar · Agenda Confirmada · Sin Respuesta\n\n"
             "**📞 Contacto Directo:** Cliente por Contactar · "
-            "Agenda Confirmada · Sin Respuesta"
+            "Agenda Confirmada "
         )
 
     # ── Agenda Confirmada: mostrar ventana inline ─────────

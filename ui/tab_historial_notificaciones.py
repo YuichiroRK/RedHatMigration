@@ -11,8 +11,33 @@ from ui.components import section_card
 
 DB_PATH = "migraciones.db"
 
-ESTADOS_NOTIF = ["Enviado", "Recibido", "Sin Respuesta", "Rebotado"]
-CANALES       = ["Email", "Teléfono", "Reunión Teams", "WhatsApp", "Otro"]
+ESTADOS_POR_CANAL = {
+    "Email": [
+        "Correo Enviado",
+        "Correo Rebotado",
+        "Cliente por Contactar",
+        "Agenda Confirmada",
+        "Sin Respuesta",
+    ],
+    "Contacto Directo": [
+        "Cliente por Contactar",
+        "Agenda Confirmada",
+    ],
+}
+
+# ── Estado badge ─────────────────────────────────────────
+ESTADO_COLORS = {
+    "Correo Enviado":        "#38A169",
+    "Correo Rebotado":       "#E53E3E",
+    "Cliente por Contactar": "#D69E2E",
+    "Agenda Confirmada":     "#3182CE",
+    "Sin Respuesta":         "#718096",
+}
+
+def _badge(estado: str) -> str:
+    c = ESTADO_COLORS.get(estado, "#8A95A3")
+    return (f'<span style="background:{c};color:#fff;padding:2px 10px;'
+            f'border-radius:20px;font-size:.72rem;font-weight:700;">{estado}</span>')
 
 
 def _load_notificaciones() -> pd.DataFrame:
@@ -28,7 +53,7 @@ def _load_notificaciones() -> pd.DataFrame:
 
 
 def _update_notificacion(rowid: int, nuevo_estado: str, nuevo_canal: str,
-                          nuevas_notas: str) -> tuple[bool, str]:
+                         nuevas_notas: str) -> tuple[bool, str]:
     """
     Updates Estado_Notificacion, Canal_Notificacion and Notas for a given rowid.
     Only touches NOTIFICACIONES_CLIENTES.
@@ -48,20 +73,6 @@ def _update_notificacion(rowid: int, nuevo_estado: str, nuevo_canal: str,
         return True, ""
     except Exception as e:
         return False, str(e)
-
-
-# ── Estado badge ─────────────────────────────────────────
-ESTADO_COLORS = {
-    "Enviado":       "#38A169",
-    "Recibido":      "#3182CE",
-    "Sin Respuesta": "#D69E2E",
-    "Rebotado":      "#E53E3E",
-}
-
-def _badge(estado: str) -> str:
-    c = ESTADO_COLORS.get(estado, "#8A95A3")
-    return (f'<span style="background:{c};color:#fff;padding:2px 10px;'
-            f'border-radius:20px;font-size:.72rem;font-weight:700;">{estado}</span>')
 
 
 def _notif_editor(df_view: pd.DataFrame):
@@ -122,10 +133,14 @@ def _notif_editor(df_view: pd.DataFrame):
             st.warning("No se pudo identificar el registro.")
             return
 
-        cur_estado = str(row.get("Estado_Notificacion","Enviado"))
-        cur_canal  = str(row.get("Canal_Notificacion","Email"))
+        cur_estado = str(row.get("Estado_Notificacion", "Correo Enviado"))
+        cur_canal  = str(row.get("Canal_Notificacion", "Email"))
         cur_notas  = str(row.get("Notas",""))
         if cur_notas in ("nan","None"): cur_notas = ""
+
+        # Validate channel against available options, default to Email if invalid
+        if cur_canal not in ESTADOS_POR_CANAL:
+            cur_canal = "Email"
 
         # Current badge
         st.markdown(
@@ -134,14 +149,19 @@ def _notif_editor(df_view: pd.DataFrame):
         )
 
         c1, c2 = st.columns(2)
-        with c1:
-            est_idx   = ESTADOS_NOTIF.index(cur_estado) if cur_estado in ESTADOS_NOTIF else 0
-            new_estado = st.selectbox("Nuevo Estado de la Notificación:", ESTADOS_NOTIF,
-                                       index=est_idx, key="hist_new_estado")
+        
         with c2:
-            can_idx   = CANALES.index(cur_canal) if cur_canal in CANALES else 0
-            new_canal  = st.selectbox("Nuevo Canal de la Notificación:", CANALES,
-                                       index=can_idx, key="hist_new_canal")
+            canales_disponibles = list(ESTADOS_POR_CANAL.keys())
+            can_idx = canales_disponibles.index(cur_canal) if cur_canal in canales_disponibles else 0
+            new_canal = st.selectbox("Nuevo Canal de la Notificación:", canales_disponibles,
+                                     index=can_idx, key="hist_new_canal")
+
+        with c1:
+            estados_disponibles = ESTADOS_POR_CANAL[new_canal]
+            # Try to keep the current state if it's valid for the new channel, otherwise select the first one
+            est_idx = estados_disponibles.index(cur_estado) if cur_estado in estados_disponibles else 0
+            new_estado = st.selectbox("Nuevo Estado de la Notificación:", estados_disponibles,
+                                      index=est_idx, key="hist_new_estado")
 
         new_notas = st.text_area("Notas / Observaciones:", value=cur_notas,
                                   height=90, key="hist_new_notas",
@@ -158,7 +178,7 @@ def _notif_editor(df_view: pd.DataFrame):
 
 
 def render():
-    st.markdown("## 📭 Historial de Notificaciones")
+    st.markdown("## 📭 Seguimiento de Notificaciones")
 
     df = _load_notificaciones()
 
@@ -194,11 +214,11 @@ def render():
         if not df_view.empty:
             m1, m2, m3, m4 = st.columns(4)
             total      = len(df_view)
-            exitosos   = len(df_view[df_view["Estado_Notificacion"].isin(["Enviado","Recibido"])])
-            fallidos   = len(df_view[df_view["Estado_Notificacion"].isin(["Rebotado","Sin Respuesta"])])
+            exitosos   = len(df_view[df_view["Estado_Notificacion"].isin(["Correo Enviado", "Agenda Confirmada"])])
+            fallidos   = len(df_view[df_view["Estado_Notificacion"].isin(["Correo Rebotado", "Sin Respuesta", "Cliente por Contactar"])])
             canal_fav  = df_view["Canal_Notificacion"].mode()[0] if not df_view["Canal_Notificacion"].empty else "N/A"
             m1.metric("Total Registros",        total)
-            m2.metric("✅ Enviados/Recibidos",   exitosos)
+            m2.metric("✅ Enviados/Confirmados",  exitosos)
             m3.metric("⚠️ Rebotados/Sin Resp.", fallidos)
             m4.metric("📱 Canal Principal",      canal_fav)
         else:
