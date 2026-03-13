@@ -1,6 +1,7 @@
 """
 ui/tab_stats.py
 Estadística de Clientes + Estadística de Máquinas — dos tabs separados.
+Reordenado: Históricos primero, luego tarjetas, luego detalles.
 """
 import io
 import sqlite3
@@ -24,11 +25,11 @@ COL_CLIENTE_DB = "CUSTOMER_Name_SCCD-TM"
 _RB_INM = {"Rollback Inmediato", "Fallida", "RollbackInmediato"}
 _RB_SEG = {"Rollback Tras Seguimiento", "RollBack", "RollbackTrasSeguimiento"}
 
+
 # ──────────────────────────────────────────────────────────────
-# HISTORICO SEMANAL (para Clientes)
+# HISTORICO SEMANAL (para VMs)
 # ──────────────────────────────────────────────────────────────
 def _init_historico_vms_table():
-    """Creates HISTORICO_VMS_SEMANAL for weekly machine stats."""
     conn = sqlite3.connect(DB_PATH)
     conn.execute('''
         CREATE TABLE IF NOT EXISTS HISTORICO_VMS_SEMANAL (
@@ -45,7 +46,6 @@ def _init_historico_vms_table():
     ''')
     conn.commit()
     conn.close()
-
 
 def _save_weekly_vms(snap: dict, week_start, label: str) -> bool:
     conn = sqlite3.connect(DB_PATH)
@@ -68,7 +68,6 @@ def _save_weekly_vms(snap: dict, week_start, label: str) -> bool:
     finally:
         conn.close()
 
-
 def _load_historical_vms(n_weeks: int) -> pd.DataFrame:
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -82,10 +81,7 @@ def _load_historical_vms(n_weeks: int) -> pd.DataFrame:
         conn.close()
     return df
 
-
 def _auto_save_week_vms():
-    """Auto-saves VM snapshot for current week."""
-    from datetime import date, timedelta
     today      = date.today()
     week_start = today - timedelta(days=today.weekday())
     def week_label(d): return f"Sem {d.isocalendar()[1]}\n{d.strftime('%d/%m')}"
@@ -93,20 +89,17 @@ def _auto_save_week_vms():
     _save_weekly_vms(snap, week_start, week_label(week_start))
 
 
+# ──────────────────────────────────────────────────────────────
+# HISTORICO SEMANAL (para Clientes)
+# ──────────────────────────────────────────────────────────────
 def _init_historico_table():
-    """
-    Creates HISTORICO_SEMANAL. Drops and recreates if legacy schema detected.
-    Dynamically adds 'Sin Respuesta' column if missing.
-    """
     conn = sqlite3.connect(DB_PATH)
     try:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(HISTORICO_SEMANAL)").fetchall()]
         if cols and "Sin Contactar" not in cols:
-            # Old schema — drop so it gets recreated with correct columns
             conn.execute("DROP TABLE IF EXISTS HISTORICO_SEMANAL")
             conn.commit()
         elif cols and "Sin Respuesta" not in cols:
-            # Add missing Sin Respuesta to an existing valid schema
             conn.execute('ALTER TABLE HISTORICO_SEMANAL ADD COLUMN "Sin Respuesta" INTEGER DEFAULT 0')
             conn.commit()
     except Exception:
@@ -125,9 +118,7 @@ def _init_historico_table():
     conn.commit()
     conn.close()
 
-
 def _save_weekly_data_to_db(df: pd.DataFrame) -> bool:
-    """Upserts rows — never deletes historical weeks."""
     if df.empty:
         return False
     df_save = df.copy()
@@ -150,7 +141,6 @@ def _save_weekly_data_to_db(df: pd.DataFrame) -> bool:
     finally:
         conn.close()
 
-
 def _load_historical_data(n_weeks: int) -> pd.DataFrame:
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -167,27 +157,8 @@ def _load_historical_data(n_weeks: int) -> pd.DataFrame:
 
 
 # ──────────────────────────────────────────────────────────────
-# CLIENT SNAPSHOT
+# CLIENT SNAPSHOT (NUEVA LÓGICA ESTRICTA)
 # ──────────────────────────────────────────────────────────────
-def _get_client_status(vm_estados: list) -> str:
-    """
-    Migrado OK: todas las VMs en Éxito.
-    Agendado: al menos una VM en Agendado.
-    Priority: Fallida > RollBack > En Seguimiento > Sin Agendar > Agendado.
-    """
-    if not vm_estados:
-        return "Sin Agendar"
-    s = set(str(e).strip() for e in vm_estados)
-    if s == {"Migrada OK"}:
-        return "Migrado OK"
-    for est in ("Rollback Inmediato", "Rollback Tras Seguimiento", "En Seguimiento"):
-        if est in s:
-            return est
-    if "Agendado" in s:
-        return "Agendado"
-    return "Sin Agendar"
-
-
 def _load_client_snapshot() -> pd.DataFrame:
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -210,23 +181,60 @@ def _load_client_snapshot() -> pd.DataFrame:
     except Exception:
         df_vms = pd.DataFrame(columns=["Cliente", "Estado", "Fecha_Finalizacion"])
 
-    # Notifications — distinguish notificado vs rebotado vs sin respuesta
     try:
         df_notif = pd.read_sql_query(
             'SELECT "Cliente", "Fecha Notificación", "Estado_Notificacion" FROM NOTIFICACIONES_CLIENTES', conn)
+        df_notif['Fecha Notificación'] = pd.to_datetime(df_notif['Fecha Notificación'], errors='coerce')
+        # Obtener SOLO la última notificación por cliente para las reglas de contacto
+        df_notif_latest = df_notif.sort_values('Fecha Notificación').groupby('Cliente').last().reset_index()
+        dict_latest_notif = df_notif_latest.set_index('Cliente')['Estado_Notificacion'].to_dict()
     except Exception:
-        df_notif = pd.DataFrame(columns=["Cliente", "Fecha Notificación", "Estado_Notificacion"])
+        dict_latest_notif = {}
 
     conn.close()
 
     rows = []
     for cli in df_cli["Cliente"].dropna().unique():
         vms_cli   = df_vms[df_vms["Cliente"] == cli] if not df_vms.empty else pd.DataFrame()
-        estados   = vms_cli["Estado"].tolist() if not vms_cli.empty else []
+        estados   = vms_cli["Estado"].dropna().tolist()
         total_vms = len(estados)
-        vms_ok    = estados.count("Migrada OK")
-        est_cli   = _get_client_status(estados)
+        vms_ok    = estados.count("Migrada OK") + estados.count("Éxito")
 
+        latest_notif_est = dict_latest_notif.get(cli)
+
+        # ── 1. Banderas de Reglas de Negocio (Notificaciones) ──
+        # Sin Contactar: No hay registros o la última notif fue Rebotado
+        sin_contactar = (latest_notif_est is None) or (latest_notif_est == "Correo Rebotado")
+        
+        # Sin Respuesta: Última notificación fue exactamente "Correo Enviado" o "Sin Respuesta"
+        sin_respuesta = (latest_notif_est in ("Correo Enviado", "Sin Respuesta"))
+        
+        # Notificados: Efectivamente contactados (última NO fue rebotado)
+        notificado = (latest_notif_est is not None) and (latest_notif_est != "Correo Rebotado")
+
+        # ── 2. Banderas de Reglas de Negocio (VMs) ──
+        agendado = "Agendado" in estados
+        migrado_ok = (total_vms > 0) and all(e in ("Migrada OK", "Éxito") for e in estados)
+
+        # ── 3. Clasificación Visual del Cliente (Prioridad) ──
+        if migrado_ok:
+            est_cli = "Migrado OK"
+        elif agendado:
+            est_cli = "Agendado"
+        elif any(e in ("Rollback Inmediato", "Rollback Tras Seguimiento", "En Seguimiento", "Fallido", "Fallida") for e in estados):
+            est_cli = "Fallido" # Fallback
+            for e in ("Rollback Inmediato", "Rollback Tras Seguimiento", "En Seguimiento"):
+                if e in estados:
+                    est_cli = e
+                    break
+        elif sin_respuesta:
+            est_cli = "Sin Respuesta"
+        elif notificado:
+            est_cli = "Notificado"
+        else:
+            est_cli = "Sin Contactar"
+
+        # Fecha de Resolución
         fecha_resolucion = pd.NaT
         if not vms_cli.empty and "Fecha_Finalizacion" in vms_cli.columns:
             fechas = pd.to_datetime(vms_cli["Fecha_Finalizacion"].astype(str).str[:10], errors="coerce")
@@ -237,24 +245,6 @@ def _load_client_snapshot() -> pd.DataFrame:
                 if mask.any():
                     fecha_resolucion = fechas[mask].max()
 
-        notif_cli = df_notif[df_notif["Cliente"] == cli] if not df_notif.empty else pd.DataFrame()
-        if notif_cli.empty:
-            notificado    = False
-            sin_resp_cnt  = 0
-            ultima_notif  = None
-        else:
-            non_bounced   = notif_cli[notif_cli["Estado_Notificacion"] != "Correo Rebotado"]
-            notificado    = len(non_bounced) > 0
-            sin_resp_cnt  = len(notif_cli[notif_cli["Estado_Notificacion"] == "Sin Respuesta"])
-            ultima_notif  = notif_cli["Fecha Notificación"].max() if "Fecha Notificación" in notif_cli.columns else None
-
-        # Change client state to 'Sin Respuesta' if they have >= 3 non-responses and aren't scheduled yet
-        if est_cli == "Sin Agendar" and sin_resp_cnt >= 3:
-            est_cli = "Sin Respuesta"
-            
-        # Sin Contactar son aquellos que no han sido notificados (y tampoco están agendados o listos)
-        sin_contactar = (not notificado) and (est_cli not in ("Agendado", "Migrado OK", "Sin Respuesta"))
-
         rows.append({
             "Cliente":           cli,
             "Estado_Cliente":    est_cli,
@@ -262,28 +252,131 @@ def _load_client_snapshot() -> pd.DataFrame:
             "VMs Éxito":         vms_ok,
             "Notificado":        notificado,
             "Sin Contactar":     sin_contactar,
-            "Última Notif.":     ultima_notif,
+            "Sin Respuesta":     sin_respuesta,
+            "Agendado_Flag":     agendado,
+            "Migrado_OK_Flag":   migrado_ok,
+            "Última Notif.":     latest_notif_est,
             "Fecha_Resolucion":  fecha_resolucion,
         })
     return pd.DataFrame(rows)
 
 
+def _get_current_week_ok_metrics(df_clients: pd.DataFrame):
+    """Calcula Migrados OK de la semana actual y el acumulado total."""
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+
+    def _in_week(d):
+        try:
+            if pd.isna(d): return False
+            return week_start <= d.date() <= week_end
+        except: return False
+
+    if "Fecha_Resolucion" in df_clients.columns:
+        ok_wk = len(df_clients[(df_clients["Migrado_OK_Flag"] == True) & df_clients["Fecha_Resolucion"].apply(_in_week)])
+    else:
+        ok_wk = 0
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        r = conn.execute('SELECT "Migrados OK (acum.)" FROM HISTORICO_SEMANAL WHERE week_start=?', (str(week_start - timedelta(weeks=1)),)).fetchone()
+        prev_acum = int(r[0] or 0) if r else 0
+    except:
+        prev_acum = 0
+    finally:
+        conn.close()
+
+    return ok_wk, prev_acum + ok_wk
+
+
+def _calculate_weekly_data_live(n_weeks: int, df_clients: pd.DataFrame) -> pd.DataFrame:
+    """Recalcula el histórico de clientes en base a las semanas solicitadas."""
+    if df_clients.empty:
+        return pd.DataFrame()
+
+    today   = date.today()
+    current = today - timedelta(days=today.weekday())
+    weeks   = []
+    for _ in range(n_weeks):
+        weeks.append(current)
+        current -= timedelta(weeks=1)
+    weeks.reverse()
+
+    def week_label(d): return f"Sem {d.isocalendar()[1]}\n{d.strftime('%d/%m')}"
+
+    df_c = df_clients.copy()
+    total_cli = len(df_c)
+    snap_notificados   = int(df_c["Notificado"].sum())
+    snap_sin_contactar = int(df_c["Sin Contactar"].sum())
+    snap_sin_resp      = int(df_c["Sin Respuesta"].sum())
+    snap_agendados     = int(df_c["Agendado_Flag"].sum())
+
+    rows = []
+    for wstart in weeks:
+        wend  = wstart + timedelta(days=6)
+        label = week_label(wstart)
+
+        # OKs in this specific week window
+        def _in_window(d):
+            try: return wstart <= d.date() <= wend
+            except: return False
+            
+        def _cum_window(d):
+            try: return d.date() <= wend
+            except: return False
+
+        ok_wk   = len(df_c[(df_c["Migrado_OK_Flag"] == True) & df_c["Fecha_Resolucion"].apply(_in_window)])
+        cum_ok  = len(df_c[(df_c["Migrado_OK_Flag"] == True) & df_c["Fecha_Resolucion"].apply(_cum_window)])
+        
+        rows.append({
+            "week_start":          wstart,
+            "Semana":              label,
+            "Total Clientes":      total_cli,
+            "Notificados":         snap_notificados,
+            "Sin Contactar":       snap_sin_contactar,
+            "Sin Respuesta":       snap_sin_resp,
+            "Agendados":           snap_agendados,
+            "Migrados OK":         ok_wk,
+            "Migrados OK (acum.)": cum_ok,
+        })
+    return pd.DataFrame(rows)
+
+
+def _auto_save_week(df_clients: pd.DataFrame):
+    """Guarda en BD el registro automático semanal."""
+    if df_clients.empty:
+        return
+
+    today      = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    ws_str     = str(week_start)
+
+    ok_wk, ok_acum = _get_current_week_ok_metrics(df_clients)
+    
+    def week_label(d): return f"Sem {d.isocalendar()[1]}\n{d.strftime('%d/%m')}"
+
+    row_data = pd.DataFrame([{
+        "week_start":          ws_str,
+        "Semana":              week_label(week_start),
+        "Total Clientes":      len(df_clients),
+        "Notificados":         int(df_clients["Notificado"].sum()),
+        "Sin Contactar":       int(df_clients["Sin Contactar"].sum()),
+        "Sin Respuesta":       int(df_clients["Sin Respuesta"].sum()),
+        "Agendados":           int(df_clients["Agendado_Flag"].sum()),
+        "Migrados OK":         ok_wk,
+        "Migrados OK (acum.)": ok_acum,
+    }])
+    _save_weekly_data_to_db(row_data)
+
+
 # ──────────────────────────────────────────────────────────────
-# VM SNAPSHOT  (live — no histórico aún)
+# VM SNAPSHOT
 # ──────────────────────────────────────────────────────────────
 def _load_vm_snapshot(fase_filter: str = None) -> dict:
-    """
-    Calcula métricas de VMs según definición:
-    - Sin Agendar: en DATABASE pero sin registro de ventana
-    - Agendadas: Estado = Agendado
-    - En Seguimiento: Estado = En Seguimiento AND Fecha_Ejecucion + 10 días > hoy
-    - Migradas OK: Estado = Éxito pasados 10 días (o Éxito sin fecha), o En Seguimiento pasados 10 días
-    - Fallido: RollBack (inmediato) + Fallida (rollback tras seguimiento)
-    """
     today = date.today()
     conn  = sqlite3.connect(DB_PATH)
 
-    # Total en sistema
     try:
         if fase_filter:
             total_sistema = int(pd.read_sql_query(
@@ -294,7 +387,6 @@ def _load_vm_snapshot(fase_filter: str = None) -> dict:
     except Exception:
         total_sistema = 0
 
-    # Fases disponibles
     try:
         fases = pd.read_sql_query(
             'SELECT DISTINCT "Fase" FROM DATABASE WHERE "Fase" IS NOT NULL AND "Fase" != "" ORDER BY "Fase"', conn
@@ -302,7 +394,6 @@ def _load_vm_snapshot(fase_filter: str = None) -> dict:
     except Exception:
         fases = []
 
-    # VMs con estado
     try:
         df = pd.read_sql_query("""
             SELECT v.VM_ID_TM, v.Cliente, v.StartDateTime,
@@ -317,26 +408,20 @@ def _load_vm_snapshot(fase_filter: str = None) -> dict:
 
     def _classify(row):
         est = str(row.get("Estado", "Sin Agendar")).strip()
-        if est in ("Sin Agendar", "nan", "None", ""):
-            return "Sin Agendar"
-        if est == "Agendado":
-            return "Agendado"
-        if est in _RB_INM or est in _RB_SEG:
-            return "Fallido"
+        if est in ("Sin Agendar", "nan", "None", ""): return "Sin Agendar"
+        if est == "Agendado": return "Agendado"
+        if est in _RB_INM or est in _RB_SEG: return "Fallido"
         if est == "En Seguimiento":
             try:
                 fecha_ej = pd.to_datetime(str(row["Fecha_Ejecucion"])[:10]).date()
-                if today >= fecha_ej + timedelta(days=10):
-                    return "Migrada OK"
-            except Exception:
-                pass
+                if today >= fecha_ej + timedelta(days=10): return "Migrada OK"
+            except: pass
             return "En Seguimiento"
         if est in ("Migrada OK", "Éxito"):
             try:
                 fecha_fin = pd.to_datetime(str(row["Fecha_Finalizacion"])[:10]).date()
                 return "Migrada OK" if today >= fecha_fin + timedelta(days=10) else "En Seguimiento"
-            except Exception:
-                return "Migrada OK"
+            except: return "Migrada OK"
         return est
 
     if not df.empty:
@@ -348,12 +433,10 @@ def _load_vm_snapshot(fase_filter: str = None) -> dict:
     sin_agendar_ext = max(0, total_sistema - vms_en_tabla)
     sin_agendar_int = int((df["_clase"] == "Sin Agendar").sum()) if not df.empty else 0
 
-    # Count rollback subtypes — use same sets as _classify for consistency
     if not df.empty and "_clase" in df.columns:
         df_fall = df[df["_clase"] == "Fallido"]
         rb_inm = int(df_fall["Estado"].apply(lambda e: str(e).strip() in _RB_INM).sum())
         rb_seg = int(df_fall["Estado"].apply(lambda e: str(e).strip() in _RB_SEG).sum())
-        # Anything Fallido with unrecognised name → Inmediato
         rb_inm += int(df_fall["Estado"].apply(
             lambda e: str(e).strip() not in _RB_INM and str(e).strip() not in _RB_SEG
         ).sum())
@@ -376,79 +459,6 @@ def _load_vm_snapshot(fase_filter: str = None) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────
-# WEEKLY CALCULATION (Clientes)
-# ──────────────────────────────────────────────────────────────
-def _calculate_weekly_data_live(n_weeks: int, df_clients: pd.DataFrame) -> pd.DataFrame:
-    if df_clients.empty:
-        return pd.DataFrame()
-
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df_notif = pd.read_sql_query(
-            'SELECT "Cliente", "Fecha Notificación" AS fecha FROM NOTIFICACIONES_CLIENTES', conn)
-    except Exception:
-        df_notif = pd.DataFrame(columns=["Cliente", "fecha"])
-    conn.close()
-
-    today   = date.today()
-    current = today - timedelta(days=today.weekday())
-    weeks   = []
-    for _ in range(n_weeks):
-        weeks.append(current)
-        current -= timedelta(weeks=1)
-    weeks.reverse()
-
-    def week_label(d): return f"Sem {d.isocalendar()[1]}\n{d.strftime('%d/%m')}"
-    def _parse_date(val):
-        try:    return pd.to_datetime(str(val)[:10])
-        except: return pd.NaT
-
-    if not df_notif.empty:
-        df_notif["_d"] = df_notif["fecha"].map(_parse_date)
-
-    df_c = df_clients.copy()
-    df_c["_d_res"] = pd.to_datetime(df_c["Fecha_Resolucion"]) if "Fecha_Resolucion" in df_c.columns else pd.NaT
-
-    snap_agendados     = len(df_c[df_c["Estado_Cliente"] == "Agendado"])
-    snap_sin_resp      = len(df_c[df_c["Estado_Cliente"] == "Sin Respuesta"])
-    total_cli          = len(df_c)
-
-    rows = []
-    for wstart in weeks:
-        wend  = wstart + timedelta(days=6)
-        label = week_label(wstart)
-
-        notif_cli = set()
-        if not df_notif.empty and "_d" in df_notif.columns:
-            mask      = df_notif["_d"].apply(lambda d: pd.notna(d) and wstart <= d.date() <= wend)
-            notif_cli = set(df_notif.loc[mask, "Cliente"].dropna())
-
-        wk_mask = df_c["_d_res"].apply(lambda d: pd.notna(d) and wstart <= d.date() <= wend)
-        df_wk   = df_c[wk_mask]
-
-        ok_wk   = len(df_wk[df_wk["Estado_Cliente"] == "Migrado OK"])
-
-        cum_mask = df_c["_d_res"].apply(lambda d: pd.isna(d) or d.date() <= wend)
-        cum_ok   = len(df_c[(df_c["Estado_Cliente"] == "Migrado OK") & cum_mask])
-
-        notif_cnt = len(notif_cli)
-        sin_c_wk  = max(0, total_cli - notif_cnt - snap_agendados - cum_ok)
-        
-        rows.append({
-            "week_start":          wstart,
-            "Semana":              label,
-            "Total Clientes":      total_cli,
-            "Notificados":         notif_cnt,
-            "Sin Contactar":       sin_c_wk,
-            "Sin Respuesta":       snap_sin_resp,
-            "Agendados":           snap_agendados,
-            "Migrados OK":         ok_wk,
-            "Migrados OK (acum.)": cum_ok,
-        })
-    return pd.DataFrame(rows)
-
-
-# ──────────────────────────────────────────────────────────────
 # CHARTS
 # ──────────────────────────────────────────────────────────────
 _PLOTLY_CFG = {
@@ -456,7 +466,6 @@ _PLOTLY_CFG = {
     "toImageButtonOptions": {"format": "png", "filename": "stats", "height": 500, "width": 1400, "scale": 2},
     "modeBarButtonsToRemove": ["lasso2d", "select2d"],
 }
-
 
 def _chart_overall(df):
     fig = go.Figure()
@@ -467,7 +476,6 @@ def _chart_overall(df):
                       legend=dict(orientation="h", y=-0.25), margin=dict(l=10,r=10,t=40,b=10),
                       plot_bgcolor="#FAFAFA", paper_bgcolor="#FFFFFF")
     return fig
-
 
 def _chart_notif(df):
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -483,7 +491,6 @@ def _chart_notif(df):
                       legend=dict(orientation="h", y=-0.35, font_size=10), margin=dict(l=10,r=10,t=40,b=10),
                       plot_bgcolor="#FAFAFA", paper_bgcolor="#FFFFFF")
     return fig
-
 
 def _chart_vm_donut(snap):
     labels = ["Sin Agendar", "Agendadas", "En Seguimiento", "Migradas OK", "Fallido"]
@@ -506,16 +513,17 @@ def _chart_vm_donut(snap):
 def _to_excel(df_weekly, df_clients, df_vms=None):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        # Client weekly
         df_weekly.drop(columns=["week_start"], errors="ignore").to_excel(
             writer, index=False, sheet_name="Clientes Semanal")
-        # Client detail
-        df_clients.drop(columns=["_d_res", "Fecha_Resolucion"], errors="ignore").to_excel(
-            writer, index=False, sheet_name="Detalle Clientes")
-        # VM detail if provided
+        
+        # Limpiar banderas internas para exportación limpia
+        export_cli = df_clients.drop(columns=["Fecha_Resolucion", "Agendado_Flag", "Migrado_OK_Flag"], errors="ignore")
+        export_cli.to_excel(writer, index=False, sheet_name="Detalle Clientes")
+        
         if df_vms is not None and not df_vms.empty:
             df_vms.drop(columns=["_clase"], errors="ignore").to_excel(
                 writer, index=False, sheet_name="Detalle VMs")
+                
         for sn in writer.sheets:
             ws = writer.sheets[sn]
             for col in ws.columns:
@@ -525,151 +533,15 @@ def _to_excel(df_weekly, df_clients, df_vms=None):
 
 
 # ──────────────────────────────────────────────────────────────
-# CLIENT DETAIL DRILL-DOWN
+# UI HELPERS / DRILL-DOWN
 # ──────────────────────────────────────────────────────────────
 _ESTADO_COLOR = {
     "Migrado OK": "#2E7D32", "Agendado": "#3182CE",
     "En Seguimiento": "#805AD5", "Sin Agendar": "#D69E2E",
     "Rollback Tras Seguimiento": "#E53E3E", "Rollback Inmediato": "#C53030",
-    "Sin Respuesta": "#718096",
+    "Sin Respuesta": "#718096", "Notificado": "#0288D1", "Sin Contactar": "#E53E3E"
 }
 
-_FILT_MAP = {
-    "Total Clientes":      None,
-    "Notificados":         "__notif__",
-    "Sin Contactar":       "__sin_contactar__",
-    "Agendados":           ["Agendado"],
-    "Migrados OK":         ["Migrado OK"],
-    "En Seguimiento":      ["En Seguimiento"],
-    "RollBack":            ["Rollback Tras Seguimiento"],
-    "Fallido":             ["Rollback Inmediato"],
-    "Migrados OK (acum.)": ["Migrado OK"],
-    "Sin Respuesta":       ["Sin Respuesta"],
-}
-
-
-def _client_detail(metric: str, df_clients: pd.DataFrame):
-    filt = _FILT_MAP.get(metric)
-    if filt is None:
-        df_show = df_clients.copy()
-    elif filt == "__notif__":
-        df_show = df_clients[df_clients["Notificado"] == True].copy()
-    elif filt == "__sin_contactar__":
-        df_show = df_clients[df_clients["Sin Contactar"] == True].copy()
-    else:
-        df_show = df_clients[df_clients["Estado_Cliente"].isin(filt)].copy()
-
-    if df_show.empty:
-        st.info(f"Sin clientes en **{metric}** actualmente.")
-        return
-
-    with st.expander(f"👥 {len(df_show)} cliente(s) — {metric}", expanded=False):
-        for _, row in df_show.iterrows():
-            est   = row["Estado_Cliente"]
-            color = _ESTADO_COLOR.get(est, "#9E9E9E")
-            vms_s = (f"{row['VMs Éxito']}/{row['Total VMs']} VMs migradas"
-                     if row["Total VMs"] > 0 else "Sin VMs registradas")
-            notif_s = (f"Última notif: {str(row['Última Notif.'])[:10]}"
-                       if row["Notificado"] else "Sin notificación")
-            st.markdown(
-                f'<div style="background:#fff;border:1px solid #E8ECF1;border-radius:10px;'
-                f'padding:9px 14px;margin-bottom:5px;border-left:4px solid {color};'
-                f'display:flex;align-items:center;gap:12px;">'
-                f'<div style="flex:1;">'
-                f'<div style="font-size:.82rem;font-weight:700;color:#1E2330;">{row["Cliente"]}</div>'
-                f'<div style="font-size:.7rem;color:#8A95A3;margin-top:2px;">{vms_s} · {notif_s}</div>'
-                f'</div>'
-                f'<span style="background:{color};color:#fff;padding:2px 10px;'
-                f'border-radius:20px;font-size:.7rem;font-weight:700;white-space:nowrap;">'
-                f'{est}</span></div>',
-                unsafe_allow_html=True)
-
-
-# ──────────────────────────────────────────────────────────────
-# VM DETAIL DRILL-DOWN
-# ──────────────────────────────────────────────────────────────
-_VM_META = {
-    "Sin Agendar":    {"color": "#D69E2E", "icon": "⏳"},
-    "Agendado":       {"color": "#3182CE", "icon": "🔵"},
-    "En Seguimiento": {"color": "#805AD5", "icon": "🔍"},
-    "Migrada OK":     {"color": "#2E7D32", "icon": "✅"},
-    "Fallido":        {"color": "#C53030", "icon": "❌"},
-}
-
-
-def _load_sin_agendar_vms() -> pd.DataFrame:
-    """VMs in DATABASE but with no VMs record, or with Sin Agendar estado."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df_db = pd.read_sql_query(
-            'SELECT "VM_ID_TM", "CUSTOMER_Name_SCCD-TM" AS Cliente FROM DATABASE', conn)
-        try:
-            df_vms = pd.read_sql_query(
-                'SELECT VM_ID_TM, Cliente, Estado FROM VMs', conn)
-            vms_ids = set(df_vms["VM_ID_TM"].dropna().tolist())
-            # Not in VMs table at all
-            df_not_in = df_db[~df_db["VM_ID_TM"].isin(vms_ids)].copy()
-            df_not_in["Motivo"] = "No en tabla VMs"
-            df_not_in["Estado"] = "Sin Agendar"
-            # In VMs but with Sin Agendar estado
-            df_in_sa = df_vms[df_vms["Estado"].isin(["Sin Agendar","","nan","None"]) |
-                               df_vms["Estado"].isna()].copy()
-            df_in_sa["Motivo"] = "Sin Agendar en VMs"
-            # Merge
-            combined = pd.concat([
-                df_not_in[["VM_ID_TM","Cliente","Estado","Motivo"]],
-                df_in_sa[["VM_ID_TM","Cliente","Estado","Motivo"]]
-            ], ignore_index=True).drop_duplicates("VM_ID_TM")
-            return combined
-        except Exception:
-            df_db["Motivo"] = "No en tabla VMs"
-            df_db["Estado"] = "Sin Agendar"
-            return df_db
-    except Exception:
-        return pd.DataFrame()
-    finally:
-        conn.close()
-
-
-def _vm_detail(clase: str, df: pd.DataFrame):
-    meta = _VM_META.get(clase, {"color": "#9E9E9E", "icon": "•"})
-
-    if clase == "Sin Agendar":
-        # Special: load from DATABASE vs VMs comparison
-        df_show = _load_sin_agendar_vms()
-    elif clase == "Rollback Inmediato":
-        if df.empty:
-            st.info(f"Sin VMs en **{clase}**.")
-            return
-        df_show = df[df["_clase"] == "Fallido"].copy()
-        df_show = df_show[df_show["Estado"].apply(lambda e: str(e).strip() in _RB_INM)]
-    elif clase == "Rollback Tras Seguimiento":
-        if df.empty:
-            st.info(f"Sin VMs en **{clase}**.")
-            return
-        df_show = df[df["_clase"] == "Fallido"].copy()
-        df_show = df_show[df_show["Estado"].apply(lambda e: str(e).strip() in _RB_SEG)]
-    else:
-        if df.empty:
-            st.info(f"Sin VMs en **{clase}**.")
-            return
-        df_show = df[df["_clase"] == clase] if "_clase" in df.columns else df
-
-    if df_show.empty:
-        st.info(f"Sin VMs en **{clase}** actualmente.")
-        return
-
-    with st.expander(f"{meta['icon']} {len(df_show)} VM(s) — {clase}", expanded=False):
-        show_cols = [c for c in ["VM_ID_TM", "Cliente", "Estado", "Motivo",
-                                  "Fecha_Ejecucion", "Fecha_Finalizacion"]
-                     if c in df_show.columns]
-        st.dataframe(df_show[show_cols] if show_cols else df_show,
-                     use_container_width=True, hide_index=True)
-
-
-# ──────────────────────────────────────────────────────────────
-# HELPERS UI
-# ──────────────────────────────────────────────────────────────
 def _metric_card(icon, label, value, color, subtitle=""):
     sub = f'<div style="font-size:.62rem;color:#A0AEC0;margin-top:1px;">{subtitle}</div>' if subtitle else ""
     return (
@@ -683,7 +555,6 @@ def _metric_card(icon, label, value, color, subtitle=""):
         f'{sub}</div>'
     )
 
-
 def _prog(label, pct, color):
     return (
         f'<div style="margin:5px 0 10px;">'
@@ -694,15 +565,11 @@ def _prog(label, pct, color):
         f'</div></div>'
     )
 
-
-# ──────────────────────────────────────────────────────────────
-# TAB CLIENTES
-# ──────────────────────────────────────────────────────────────
 def _cli_row(row, color: str):
     vms_s   = (f"{row['VMs Éxito']}/{row['Total VMs']} VMs migradas"
                if row["Total VMs"] > 0 else "Sin VMs registradas")
-    notif_s = (f"Última notif: {str(row['Última Notif.'])[:10]}"
-               if row["Notificado"] else "Sin notificación")
+    notif_s = (f"Última notif: {row['Última Notif.']}"
+               if pd.notna(row["Última Notif."]) else "Sin notificación")
     st.markdown(
         f'<div style="background:#fff;border:1px solid #E8ECF1;border-radius:10px;'
         f'padding:9px 14px;margin-bottom:5px;border-left:4px solid {color};'
@@ -716,25 +583,103 @@ def _cli_row(row, color: str):
         f'{row["Estado_Cliente"]}</span></div>',
         unsafe_allow_html=True)
 
+def _client_detail(metric: str, df_clients: pd.DataFrame):
+    if metric == "Total Clientes":
+        df_show = df_clients.copy()
+    elif metric == "Notificados":
+        df_show = df_clients[df_clients["Notificado"] == True].copy()
+    elif metric == "Sin Contactar":
+        df_show = df_clients[df_clients["Sin Contactar"] == True].copy()
+    elif metric == "Sin Respuesta":
+        df_show = df_clients[df_clients["Sin Respuesta"] == True].copy()
+    elif metric == "Agendados":
+        df_show = df_clients[df_clients["Agendado_Flag"] == True].copy()
+    elif metric == "Migrados OK":
+        df_show = df_clients[df_clients["Migrado_OK_Flag"] == True].copy()
+    else:
+        df_show = df_clients[df_clients["Estado_Cliente"] == metric].copy()
 
+    if df_show.empty:
+        st.info(f"Sin clientes en **{metric}** actualmente.")
+        return
+
+    with st.expander(f"👥 {len(df_show)} cliente(s) — {metric}", expanded=False):
+        for _, row in df_show.iterrows():
+            est   = row["Estado_Cliente"]
+            color = _ESTADO_COLOR.get(est, "#9E9E9E")
+            _cli_row(row, color)
+
+
+# ──────────────────────────────────────────────────────────────
+# TABS RENDER
+# ──────────────────────────────────────────────────────────────
 def _render_clientes(df_clients: pd.DataFrame):
-    total    = len(df_clients)
-    notif    = int(df_clients["Notificado"].sum()) if "Notificado" in df_clients.columns else 0
-    agend    = len(df_clients[df_clients["Estado_Cliente"] == "Agendado"])
-    ok       = len(df_clients[df_clients["Estado_Cliente"] == "Migrado OK"])
-    ok_acum  = ok  # live = same as ok; grows over time in historic table
-    sin_resp = len(df_clients[df_clients["Estado_Cliente"] == "Sin Respuesta"])
+    # ========================================================
+    # 1. HISTÓRICO Y GRÁFICOS (ARRIBA COMO SOLICITADO)
+    # ========================================================
+    st.markdown("### 📈 Histórico semanal y gráficos")
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        n_weeks = st.selectbox("Semanas a mostrar:", [4, 8, 12, 16, 24], index=2, key="stats_nweeks")
+    with c2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("⚠️ Recalcular todo", key="stats_recalc"):
+            df_rc = _calculate_weekly_data_live(n_weeks, df_clients)
+            if _save_weekly_data_to_db(df_rc):
+                st.success("¡Historial recalculado!")
+                st.rerun()
+    with c3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🔄 Actualizar vista", key="stats_refresh"):
+            st.rerun()
+
+    df_hist = _load_historical_data(n_weeks)
+
+    if df_hist.empty:
+        st.info("Sin datos históricos aún. Se guardará automáticamente al final de cada semana.")
+    else:
+        TABLE_COLS = ["Semana", "Total Clientes", "Notificados", "Sin Contactar", "Sin Respuesta",
+                      "Agendados", "Migrados OK", "Migrados OK (acum.)"]
+        disp_cols = [c for c in TABLE_COLS if c in df_hist.columns]
+        st.dataframe(df_hist[disp_cols].set_index("Semana").T, use_container_width=True)
+
+        if _has_plotly:
+            c_ch1, c_ch2 = st.columns(2)
+            with c_ch1:
+                st.plotly_chart(_chart_overall(df_hist), use_container_width=True, config=_PLOTLY_CFG)
+            with c_ch2:
+                st.plotly_chart(_chart_notif(df_hist), use_container_width=True, config=_PLOTLY_CFG)
+
+        ec1, ec2, _ = st.columns([1, 1, 4])
+        with ec1:
+            st.download_button("📥 Excel", data=_to_excel(df_hist, df_clients),
+                               file_name=f"clientes_{date.today()}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with ec2:
+            csv = df_hist.drop(columns=["week_start"], errors="ignore").to_csv(index=False).encode("utf-8-sig")
+            st.download_button("📥 CSV", data=csv, file_name=f"clientes_{date.today()}.csv", mime="text/csv")
+
+    st.markdown("---")
+
+    # ========================================================
+    # 2. TARJETAS DE MÉTRICAS BONITAS
+    # ========================================================
+    st.markdown("### 📊 Resumen Actual")
     
-    # Sin Contactar exacto de acuerdo a la nueva lógica
-    sin_c = int(df_clients["Sin Contactar"].sum()) if "Sin Contactar" in df_clients.columns else max(0, total - notif - agend - ok_acum)
+    total    = len(df_clients)
+    notif    = int(df_clients["Notificado"].sum())
+    sin_c    = int(df_clients["Sin Contactar"].sum())
+    sin_resp = int(df_clients["Sin Respuesta"].sum())
+    agend    = int(df_clients["Agendado_Flag"].sum())
+    ok_wk, ok_acum = _get_current_week_ok_metrics(df_clients)
 
     cards = [
-        ("🏢", "Total Clientes",       total,   "#FF7800", ""),
-        ("📨", "Notificados",          notif,   "#0288D1", "contacto exitoso"),
-        ("⚠️", "Sin Contactar",        sin_c,   "#E53E3E", "pendientes de contactar"),
-        ("🔕", "Sin Respuesta",        sin_resp,"#718096", "≥3 notifs sin resp."),
+        ("🏢", "Total Clientes",       total,   "#FF7800", "en sistema"),
+        ("📨", "Notificados",          notif,   "#0288D1", "último estado ≠ rebotado"),
+        ("⚠️", "Sin Contactar",        sin_c,   "#E53E3E", "sin notif. o rebotado"),
+        ("🔕", "Sin Respuesta",        sin_resp,"#718096", "último estado: correo enviado"),
         ("📅", "Agendados",            agend,   "#3182CE", "≥1 VM con ventana"),
-        ("✅", "Migrados OK",          ok,      "#2E7D32", "todas las VMs exitosas"),
+        ("✅", "Migrados OK",          ok_wk,   "#2E7D32", "concluidos esta semana"),
         ("📈", "Migrados OK (Acum.)",  ok_acum, "#1B5E20", "total histórico"),
     ]
 
@@ -742,98 +687,26 @@ def _render_clientes(df_clients: pd.DataFrame):
     for col, (icon, label, val, color, sub) in zip(cols, cards):
         col.markdown(_metric_card(icon, label, val, color, sub), unsafe_allow_html=True)
 
-    # Progress bars
-    pct_notif = round(notif   / total * 100, 1) if total else 0
+    pct_notif = round(notif / total * 100, 1) if total else 0
     pct_ok    = round(ok_acum / total * 100, 1) if total else 0
     st.markdown(
         _prog(f"📨 Notificados — {notif}/{total}", pct_notif, "#0288D1")
-        + _prog(f"✅ Migrados OK — {ok_acum}/{total}", pct_ok, "#2E7D32"),
+        + _prog(f"✅ Migrados OK (Total) — {ok_acum}/{total}", pct_ok, "#2E7D32"),
         unsafe_allow_html=True,
     )
 
-    # ── Drill-down ────────────────────────────────────────
+    # ========================================================
+    # 3. DRILL-DOWN DETALLES
+    # ========================================================
     st.markdown("#### 🔍 Detalle de clientes")
-    
-    # Extraer los listados para los expanders principales que requieren iconos personalizados
-    df_sin_contactar = df_clients[df_clients["Sin Contactar"] == True].drop_duplicates("Cliente")
-    df_sin_respuesta = df_clients[df_clients["Estado_Cliente"] == "Sin Respuesta"].drop_duplicates("Cliente")
-    df_agendados = df_clients[df_clients["Estado_Cliente"] == "Agendado"]
-
-    with st.expander(f"⚠️ {len(df_sin_contactar)} cliente(s) — Sin Contactar", expanded=False):
-        if df_sin_contactar.empty:
-            st.info("Todos los clientes han sido contactados.")
-        else:
-            for _, row in df_sin_contactar.iterrows():
-                _cli_row(row, "#E53E3E")
-
-    with st.expander(f"🔕 {len(df_sin_respuesta)} cliente(s) — Sin Respuesta", expanded=False):
-        if df_sin_respuesta.empty:
-            st.info("Sin clientes con estado Sin Respuesta.")
-        else:
-            for _, row in df_sin_respuesta.iterrows():
-                _cli_row(row, "#718096")
-
-    with st.expander(f"📅 {len(df_agendados)} cliente(s) — Agendados", expanded=False):
-        if df_agendados.empty:
-            st.info("Sin clientes agendados.")
-        else:
-            for _, row in df_agendados.iterrows():
-                _cli_row(row, "#3182CE")
-
-    # Utilizar el generador por defecto para los demás
+    _client_detail("Sin Contactar", df_clients)
+    _client_detail("Sin Respuesta", df_clients)
+    _client_detail("Agendados", df_clients)
     _client_detail("Notificados", df_clients)
     _client_detail("Migrados OK", df_clients)
 
-    # ── Histórico ─────────────────────────────────────────
-    st.markdown("---")
-    with st.expander("📈 Histórico semanal y gráficos", expanded=False):
-        c1, c2, c3 = st.columns([2, 1, 1])
-        with c1:
-            n_weeks = st.selectbox("Semanas a mostrar:", [4, 8, 12, 16, 24], index=2, key="stats_nweeks")
-        with c2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("⚠️ Recalcular todo", key="stats_recalc"):
-                df_rc = _calculate_weekly_data_live(n_weeks, df_clients)
-                if _save_weekly_data_to_db(df_rc):
-                    st.success("¡Historial recalculado!")
-                    st.rerun()
-        with c3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🔄 Actualizar vista", key="stats_refresh"):
-                st.rerun()
 
-        df_hist = _load_historical_data(n_weeks)
-
-        if df_hist.empty:
-            st.info("Sin datos históricos aún. Se guardará automáticamente al final de cada semana.")
-        else:
-            TABLE_COLS = ["Semana", "Total Clientes", "Notificados", "Sin Contactar", "Sin Respuesta",
-                          "Agendados", "Migrados OK", "Migrados OK (acum.)"]
-            disp_cols = [c for c in TABLE_COLS if c in df_hist.columns]
-            st.dataframe(df_hist[disp_cols].set_index("Semana").T, use_container_width=True)
-
-            if _has_plotly:
-                c_ch1, c_ch2 = st.columns(2)
-                with c_ch1:
-                    st.plotly_chart(_chart_overall(df_hist), use_container_width=True, config=_PLOTLY_CFG)
-                with c_ch2:
-                    st.plotly_chart(_chart_notif(df_hist), use_container_width=True, config=_PLOTLY_CFG)
-
-            ec1, ec2, _ = st.columns([1, 1, 4])
-            with ec1:
-                st.download_button("📥 Excel", data=_to_excel(df_hist, df_clients),
-                                   file_name=f"clientes_{date.today()}.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            with ec2:
-                csv = df_hist.drop(columns=["week_start"], errors="ignore").to_csv(index=False).encode("utf-8-sig")
-                st.download_button("📥 CSV", data=csv, file_name=f"clientes_{date.today()}.csv", mime="text/csv")
-
-
-# ──────────────────────────────────────────────────────────────
-# TAB MÁQUINAS
-# ──────────────────────────────────────────────────────────────
 def _render_maquinas():
-    # ── Fase filter ───────────────────────────────────────
     snap_all = _load_vm_snapshot()
     fase_sel = None
     if snap_all["fases"]:
@@ -845,7 +718,6 @@ def _render_maquinas():
                 fase_sel = None
 
     snap = _load_vm_snapshot(fase_sel) if fase_sel else snap_all
-
     total   = snap["total"]
     sin_ag  = snap["sin_agendar"]
     agend   = snap["agendadas"]
@@ -856,7 +728,64 @@ def _render_maquinas():
     rb_seg  = snap.get("rb_seguimiento", 0)
     df_vms  = snap["df"]
 
-    # ── Row 1: main cards ─────────────────────────────────
+    # ========================================================
+    # 1. HISTÓRICO Y GRÁFICOS (ARRIBA COMO SOLICITADO)
+    # ========================================================
+    st.markdown("### 📈 Histórico semanal de Máquinas")
+    hc1, hc2, _ = st.columns([1.5, 1, 3])
+    with hc1:
+        n_wk_vm = st.selectbox("Semanas:", [4, 8, 12, 16, 24], index=2, key="vm_nweeks")
+    with hc2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🔄 Actualizar", key="vm_hist_refresh"):
+            st.rerun()
+
+    df_vh = _load_historical_vms(n_wk_vm)
+
+    if df_vh.empty:
+        st.info("Sin datos históricos aún. Se guarda automáticamente cada vez que visitas esta página.")
+    else:
+        VM_TABLE_COLS = ["Semana", "Total Maquinas", "Sin Agendar", "Agendadas",
+                         "En Seguimiento", "Migradas OK", "Fallido",
+                         "Rollback Inmediato", "Rollback Tras Seguimiento"]
+        disp = [c for c in VM_TABLE_COLS if c in df_vh.columns]
+        st.dataframe(df_vh[disp].set_index("Semana").T, use_container_width=True)
+
+        if _has_plotly and not df_vh.empty:
+            fig_vm = go.Figure()
+            fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Sin Agendar",      pd.Series()), name="Sin Agendar",      marker_color="#D69E2E"))
+            fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Agendadas",        pd.Series()), name="Agendadas",        marker_color="#3182CE"))
+            fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("En Seguimiento",   pd.Series()), name="En Seguimiento",   marker_color="#805AD5"))
+            fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Migradas OK",      pd.Series()), name="Migradas OK",      marker_color="#2E7D32"))
+            fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Rollback Inmediato",  pd.Series()), name="RB Inmediato",   marker_color="#E53E3E"))
+            fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Rollback Tras Seguimiento", pd.Series()), name="RB Tras Seg.", marker_color="#DD6B20"))
+            fig_vm.update_layout(
+                title="Estado de Máquinas por Semana",
+                barmode="stack", height=360,
+                legend=dict(orientation="h", y=-0.3, font_size=10),
+                margin=dict(l=10,r=10,t=40,b=10),
+                plot_bgcolor="#FAFAFA", paper_bgcolor="#FFFFFF",
+            )
+            st.plotly_chart(fig_vm, use_container_width=True, config=_PLOTLY_CFG)
+
+        hd1, hd2, _ = st.columns([1,1,4])
+        with hd1:
+            buf_h = io.BytesIO()
+            with pd.ExcelWriter(buf_h, engine="openpyxl") as w:
+                df_vh[disp].to_excel(w, index=False, sheet_name="Histórico VMs")
+            st.download_button("📥 Excel histórico", data=buf_h.getvalue(),
+                               file_name=f"historico_vms_{date.today()}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with hd2:
+            st.download_button("📥 CSV histórico", data=df_vh[disp].to_csv(index=False).encode("utf-8-sig"),
+                               file_name=f"historico_vms_{date.today()}.csv", mime="text/csv")
+            
+    st.markdown("---")
+
+    # ========================================================
+    # 2. TARJETAS DE MÉTRICAS BONITAS
+    # ========================================================
+    st.markdown("### 📊 Resumen Actual")
     cards = [
         ("🗃️", "Total Máquinas",  total,  "#FF7800", "en DATABASE"),
         ("⏳", "Sin Agendar",     sin_ag, "#D69E2E", "sin fecha de ventana"),
@@ -868,13 +797,10 @@ def _render_maquinas():
     for col, (icon, label, val, color, sub) in zip(cols, cards):
         col.markdown(_metric_card(icon, label, val, color, sub), unsafe_allow_html=True)
 
-    # ── Row 2: Fallido — same width as others, with two sub-cards below ──
     st.markdown("<br>", unsafe_allow_html=True)
-    # Use 5 columns matching row 1, put Fallido in last position
     _, _, _, _, fall_col = st.columns(5)
     fall_col.markdown(_metric_card("❌", "Fallido",  fall, "#C53030", "total rollbacks"), unsafe_allow_html=True)
 
-    # Sub-cards underneath: align under the Fallido column using same 5-col grid
     sb1, sb2, sb3, sb4, sb_fall = st.columns(5)
     with sb_fall:
         st.markdown(
@@ -892,7 +818,6 @@ def _render_maquinas():
             f'</div>',
             unsafe_allow_html=True)
 
-    # Progress bars
     def pct(v): return round(v / total * 100, 1) if total else 0
     st.markdown(
         _prog(f"📅 Agendadas — {agend}/{total}", pct(agend), "#3182CE")
@@ -901,7 +826,6 @@ def _render_maquinas():
         unsafe_allow_html=True,
     )
 
-    # ── Nota de negocio ───────────────────────────────────
     st.markdown(
         '<div style="background:#EBF8FF;border:1px solid #90CDF4;border-radius:8px;'
         'padding:8px 14px;font-size:.75rem;color:#2B6CB0;margin:6px 0 12px;">'
@@ -912,7 +836,60 @@ def _render_maquinas():
         unsafe_allow_html=True,
     )
 
-    # ── Gráfico donut + drill-down ────────────────────────
+    # ========================================================
+    # 3. DRILL-DOWN DETALLES
+    # ========================================================
+    def _load_sin_agendar_vms() -> pd.DataFrame:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            df_db = pd.read_sql_query('SELECT "VM_ID_TM", "CUSTOMER_Name_SCCD-TM" AS Cliente FROM DATABASE', conn)
+            try:
+                df_vms = pd.read_sql_query('SELECT VM_ID_TM, Cliente, Estado FROM VMs', conn)
+                vms_ids = set(df_vms["VM_ID_TM"].dropna().tolist())
+                df_not_in = df_db[~df_db["VM_ID_TM"].isin(vms_ids)].copy()
+                df_not_in["Motivo"] = "No en tabla VMs"
+                df_not_in["Estado"] = "Sin Agendar"
+                df_in_sa = df_vms[df_vms["Estado"].isin(["Sin Agendar","","nan","None"]) | df_vms["Estado"].isna()].copy()
+                df_in_sa["Motivo"] = "Sin Agendar en VMs"
+                combined = pd.concat([df_not_in[["VM_ID_TM","Cliente","Estado","Motivo"]], df_in_sa[["VM_ID_TM","Cliente","Estado","Motivo"]]], ignore_index=True).drop_duplicates("VM_ID_TM")
+                return combined
+            except:
+                df_db["Motivo"] = "No en tabla VMs"
+                df_db["Estado"] = "Sin Agendar"
+                return df_db
+        except: return pd.DataFrame()
+        finally: conn.close()
+
+    _VM_META = {
+        "Sin Agendar":    {"color": "#D69E2E", "icon": "⏳"},
+        "Agendado":       {"color": "#3182CE", "icon": "🔵"},
+        "En Seguimiento": {"color": "#805AD5", "icon": "🔍"},
+        "Migrada OK":     {"color": "#2E7D32", "icon": "✅"},
+        "Fallido":        {"color": "#C53030", "icon": "❌"},
+    }
+
+    def _vm_detail(clase: str, df: pd.DataFrame):
+        meta = _VM_META.get(clase, {"color": "#9E9E9E", "icon": "•"})
+        if clase == "Sin Agendar": df_show = _load_sin_agendar_vms()
+        elif clase == "Rollback Inmediato":
+            if df.empty: return st.info(f"Sin VMs en **{clase}**.")
+            df_show = df[df["_clase"] == "Fallido"].copy()
+            df_show = df_show[df_show["Estado"].apply(lambda e: str(e).strip() in _RB_INM)]
+        elif clase == "Rollback Tras Seguimiento":
+            if df.empty: return st.info(f"Sin VMs en **{clase}**.")
+            df_show = df[df["_clase"] == "Fallido"].copy()
+            df_show = df_show[df_show["Estado"].apply(lambda e: str(e).strip() in _RB_SEG)]
+        else:
+            if df.empty: return st.info(f"Sin VMs en **{clase}**.")
+            df_show = df[df["_clase"] == clase] if "_clase" in df.columns else df
+
+        if df_show.empty:
+            return st.info(f"Sin VMs en **{clase}** actualmente.")
+
+        with st.expander(f"{meta['icon']} {len(df_show)} VM(s) — {clase}", expanded=False):
+            show_cols = [c for c in ["VM_ID_TM", "Cliente", "Estado", "Motivo", "Fecha_Ejecucion", "Fecha_Finalizacion"] if c in df_show.columns]
+            st.dataframe(df_show[show_cols] if show_cols else df_show, use_container_width=True, hide_index=True)
+
     if _has_plotly and total > 0:
         col_pie, col_drill = st.columns([1, 1.4])
         with col_pie:
@@ -925,155 +902,6 @@ def _render_maquinas():
         st.markdown("#### 🔍 Detalle por estado")
         for clase in ["Sin Agendar", "Agendado", "En Seguimiento", "Migrada OK", "Rollback Inmediato", "Rollback Tras Seguimiento"]:
             _vm_detail(clase, df_vms)
-
-    # ── Histórico semanal de VMs ──────────────────────────
-    st.markdown("---")
-    with st.expander("📈 Histórico semanal de Máquinas", expanded=False):
-        hc1, hc2, _ = st.columns([1.5, 1, 3])
-        with hc1:
-            n_wk_vm = st.selectbox("Semanas:", [4, 8, 12, 16, 24], index=2, key="vm_nweeks")
-        with hc2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🔄 Actualizar", key="vm_hist_refresh"):
-                st.rerun()
-
-        df_vh = _load_historical_vms(n_wk_vm)
-
-        if df_vh.empty:
-            st.info("Sin datos históricos aún. Se guarda automáticamente cada vez que visitas esta página.")
-        else:
-            VM_TABLE_COLS = ["Semana", "Total Maquinas", "Sin Agendar", "Agendadas",
-                             "En Seguimiento", "Migradas OK", "Fallido",
-                             "Rollback Inmediato", "Rollback Tras Seguimiento"]
-            disp = [c for c in VM_TABLE_COLS if c in df_vh.columns]
-            st.dataframe(df_vh[disp].set_index("Semana").T, use_container_width=True)
-
-            if _has_plotly and not df_vh.empty:
-                fig_vm = go.Figure()
-                fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Sin Agendar",      pd.Series()), name="Sin Agendar",      marker_color="#D69E2E"))
-                fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Agendadas",        pd.Series()), name="Agendadas",        marker_color="#3182CE"))
-                fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("En Seguimiento",   pd.Series()), name="En Seguimiento",   marker_color="#805AD5"))
-                fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Migradas OK",      pd.Series()), name="Migradas OK",      marker_color="#2E7D32"))
-                fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Rollback Inmediato",  pd.Series()), name="RB Inmediato",   marker_color="#E53E3E"))
-                fig_vm.add_trace(go.Bar(x=df_vh["Semana"], y=df_vh.get("Rollback Tras Seguimiento", pd.Series()), name="RB Tras Seg.", marker_color="#DD6B20"))
-                fig_vm.update_layout(
-                    title="Estado de Máquinas por Semana",
-                    barmode="stack", height=360,
-                    legend=dict(orientation="h", y=-0.3, font_size=10),
-                    margin=dict(l=10,r=10,t=40,b=10),
-                    plot_bgcolor="#FAFAFA", paper_bgcolor="#FFFFFF",
-                )
-                st.plotly_chart(fig_vm, use_container_width=True, config=_PLOTLY_CFG)
-
-            # Download historical
-            hd1, hd2, _ = st.columns([1,1,4])
-            with hd1:
-                buf_h = io.BytesIO()
-                with pd.ExcelWriter(buf_h, engine="openpyxl") as w:
-                    df_vh[disp].to_excel(w, index=False, sheet_name="Histórico VMs")
-                st.download_button("📥 Excel histórico", data=buf_h.getvalue(),
-                                   file_name=f"historico_vms_{date.today()}.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            with hd2:
-                st.download_button("📥 CSV histórico", data=df_vh[disp].to_csv(index=False).encode("utf-8-sig"),
-                                   file_name=f"historico_vms_{date.today()}.csv", mime="text/csv")
-
-
-# ──────────────────────────────────────────────────────────────
-# AUTO SAVE (once per week)
-# ──────────────────────────────────────────────────────────────
-def _auto_save_week(df_clients: pd.DataFrame):
-    """
-    Runs on every render. Updates the current week row in HISTORICO_SEMANAL.
-    - Migrados OK      = clients reaching Migrado OK status THIS calendar week (resets each Monday)
-    - Migrados OK acum = prev_week_acum + Migrados OK this week (only grows, never resets)
-    Past weeks are never touched.
-    """
-    if df_clients.empty:
-        return
-
-    today      = date.today()
-    week_start = today - timedelta(days=today.weekday())   # Monday
-    week_end   = week_start + timedelta(days=6)            # Sunday
-    ws_str     = str(week_start)
-
-    # ── Count Migrados OK THIS week ──────────────────────
-    def _parse_d(val):
-        try:    return pd.to_datetime(str(val)[:10]).date()
-        except: return None
-
-    df_c = df_clients.copy()
-    df_c["_d_res"] = df_c["Fecha_Resolucion"].apply(_parse_d) if "Fecha_Resolucion" in df_c.columns else None
-
-    def _in_week(d):
-        try:
-            if d is None or (hasattr(d, "__class__") and d.__class__.__name__ == "NaTType"):
-                return False
-            return week_start <= d <= week_end
-        except Exception:
-            return False
-
-    ok_wk = len(df_c[
-        (df_c["Estado_Cliente"] == "Migrado OK") &
-        df_c["_d_res"].apply(_in_week)
-    ])
-
-    # ── Get previous week's cumulative ──────────────────
-    prev_ws = str(week_start - timedelta(weeks=1))
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        r = conn.execute(
-            'SELECT "Migrados OK (acum.)" FROM HISTORICO_SEMANAL WHERE week_start=?',
-            (prev_ws,)).fetchone()
-        prev_acum = int(r[0] or 0) if r else 0
-    except Exception:
-        prev_acum = 0
-    finally:
-        conn.close()
-
-    acum = prev_acum + ok_wk
-
-    # ── Build other metrics ──────────────────────────────
-    total_cli      = len(df_c)
-    snap_agendados = len(df_c[df_c["Estado_Cliente"] == "Agendado"])
-    snap_sin_resp  = len(df_c[df_c["Estado_Cliente"] == "Sin Respuesta"])
-    notif          = int(df_c["Notificado"].sum()) if "Notificado" in df_c.columns else 0
-
-    # Notif count for this week
-    conn2 = sqlite3.connect(DB_PATH)
-    try:
-        df_notif = pd.read_sql_query(
-            'SELECT "Cliente", "Fecha Notificación" AS fecha FROM NOTIFICACIONES_CLIENTES', conn2)
-        if not df_notif.empty:
-            df_notif["_d"] = df_notif["fecha"].apply(
-                lambda v: pd.to_datetime(str(v)[:10]) if v else pd.NaT)
-            mask = df_notif["_d"].apply(
-                lambda d: pd.notna(d) and week_start <= d.date() <= week_end)
-            notif_wk = len(set(df_notif.loc[mask, "Cliente"].dropna()))
-        else:
-            notif_wk = 0
-    except Exception:
-        notif_wk = 0
-    finally:
-        conn2.close()
-        
-    sin_c = max(0, total_cli - notif_wk - snap_agendados - acum)
-
-    import math
-    def week_label(d): return f"Sem {d.isocalendar()[1]}\n{d.strftime('%d/%m')}"
-
-    row_data = pd.DataFrame([{
-        "week_start":          ws_str,
-        "Semana":              week_label(week_start),
-        "Total Clientes":      total_cli,
-        "Notificados":         notif_wk,
-        "Sin Contactar":       sin_c,
-        "Sin Respuesta":       snap_sin_resp,
-        "Agendados":           snap_agendados,
-        "Migrados OK":         ok_wk,
-        "Migrados OK (acum.)": acum,
-    }])
-    _save_weekly_data_to_db(row_data)
 
 
 # ──────────────────────────────────────────────────────────────
